@@ -1,0 +1,5 @@
+{
+  "state_dir": "state",
+  "origin": "https://pool.example:18473",
+  "private_http": false
+}

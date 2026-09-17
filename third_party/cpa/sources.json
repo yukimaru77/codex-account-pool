@@ -1,0 +1,16 @@
+{
+  "repository": "https://github.com/router-for-me/CLIProxyAPI",
+  "commit": "7bbfeaf8a7acf2cd5a834dcb0842539fe6aabc2b",
+  "files": [
+    {"local":"internal/cpa/types.go","source":"internal/auth/codex/openai.go","source_sha256":"927a0561565a55b63b4fa30482ea5f72841233cd50445f21ba6660c76dea6472"},
+    {"local":"internal/cpa/jwt.go","source":"internal/auth/codex/jwt_parser.go","source_sha256":"e043cc40f18ab05b2dc97c6a4dc92eb3fbf7881b470d80ea93aa5c10cce3b3f3"},
+    {"local":"internal/cpa/pkce.go","source":"internal/auth/codex/pkce.go","source_sha256":"27d69b251076ebe62c8398eed9e30bd5659bd5b629ab10a70a7e5432e6264daa"},
+    {"local":"internal/cpa/oauth.go","source":"internal/auth/codex/openai_auth.go","source_sha256":"3ecb5a58d39cbcc51bb17aa152a8f3c9bb6bad7f8c523c3cd4d1cdf02b495861"},
+    {"local":"internal/cpa/device.go","source":"sdk/auth/codex_device.go","source_sha256":"a42150cd6e9fa9fe7c40a6de64b3d91bedcc129cf173710df754543efee03365"},
+    {"local":"internal/cpa/quota.go","source":"internal/runtime/executor/helps/codex_quota.go","source_sha256":"0a034c2772f17fd5839665571b1a92f3597949553738a292b94ccbd8d5f4dcf9"},
+    {"local":"internal/cpa/websocket_status.go","source":"internal/runtime/executor/codex_websockets_errors.go","source_sha256":"56f9becd31bc26ab09954752a548afdd0fe76a66ea80254c5fa02d97e5141f5e"},
+    {"local":"internal/cpa/oauth_test.go","source":"internal/auth/codex/openai_auth_test.go","source_sha256":"759a8af977b0cb29a03934a3fb222268a51ce4543eeb05126a0445296e5eb972"},
+    {"local":"internal/cpa/quota_test.go","source":"internal/runtime/executor/helps/codex_quota_test.go","source_sha256":"6e0a4eaaa25d529d613e47f7d1bcace266368e6acefaf9b093391a897385b63b"},
+    {"local":"third_party/cpa/LICENSE","source":"LICENSE","source_sha256":"879792e89cf1bdd6a8d446033ec87e30496f97dcafc4656dc53f641509b346a6"}
+  ]
+}

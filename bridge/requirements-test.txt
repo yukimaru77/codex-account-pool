@@ -1,0 +1,3 @@
+# Runtime on Mac may use the official Homebrew distribution.
+# Pinned here for reproducible addon/transport tests in a project-only venv.
+mitmproxy==12.2.3

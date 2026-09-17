@@ -1,0 +1,12 @@
+/bin/
+/pool.json
+/bridge.json
+/state/
+/bridge/.venv/
+__pycache__/
+*.pyc
+*.key
+*.pem
+*.jsonl
+.env
+.env.*

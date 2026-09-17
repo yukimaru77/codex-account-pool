@@ -1,0 +1,13 @@
+{
+  "listen": "127.0.0.1:18473",
+  "state_dir": "state",
+  "reserve_percent": 10,
+  "quota_poll_seconds": 60,
+  "quota_max_age_seconds": 180,
+  "round_robin_endpoints": {
+    "/_pool/rr/images/generations": {"upstream_path": "/backend-api/codex/images/generations"},
+    "/_pool/rr/images/edits": {"upstream_path": "/backend-api/codex/images/edits"},
+    "/_pool/rr/responses/compact": {"upstream_path": "/backend-api/codex/responses/compact"},
+    "/_pool/rr/responses": {"upstream_path": "/backend-api/codex/responses"}
+  }
+}
