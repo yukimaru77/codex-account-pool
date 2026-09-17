@@ -61,11 +61,13 @@ type Handler struct {
 	AdminKey  string
 	Publish   func(context.Context, Record)
 	logMu     sync.Mutex
+	RemoteKB  *remoteKBStore
 }
 
 func NewHandler(cfg Config, store *Store, transport http.RoundTripper, clientKey, adminKey string) *Handler {
 	h := &Handler{Config: cfg, Store: store, Scheduler: NewScheduler(cfg), Transport: transport, ClientKey: clientKey, AdminKey: adminKey}
 	h.Publish = h.writeRecord
+	h.RemoteKB = newRemoteKBStore(cfg.StateDir)
 	return h
 }
 
@@ -105,6 +107,10 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid pool credential", 401)
 		return
 	}
+	if r.URL.Path == "/_pool/kb/bind" {
+		h.remoteKBAPI(w, r)
+		return
+	}
 	path := r.URL.Path
 	rawPath := r.URL.RawPath
 	policy := FillFirst
@@ -112,6 +118,25 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		path = route.Path
 		rawPath = ""
 		policy = RoundRobin
+	}
+	var remoteKB *kbSnapshot
+	if path == "/backend-api/codex/responses" || path == "/backend-api/codex/responses/compact" {
+		var err error
+		remoteKB, err = h.RemoteKB.resolve(kbRequestIdentity(r.Header, nil))
+		if err != nil {
+			http.Error(w, "KB storage unavailable", 500)
+			return
+		}
+		if remoteKB != nil {
+			if strings.EqualFold(r.Header.Get("Upgrade"), "websocket") {
+				r.Header.Del("Sec-WebSocket-Extensions")
+			} else if r.Method == "POST" && r.Body != nil {
+				if err = kbHTTPBody(r, path, remoteKB); err != nil {
+					http.Error(w, "remote KB request could not be prepared", 400)
+					return
+				}
+			}
+		}
 	}
 	id, err := h.Scheduler.Select(policy, path, "")
 	if err != nil {
@@ -215,6 +240,9 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 						}
 						return nil
 					},
+				}
+				if remoteKB != nil {
+					resp.Body = newKBWebsocket(resp.Body.(io.ReadWriteCloser), &kbConversation{store: h.RemoteKB, headers: r.Header.Clone(), path: path})
 				}
 			} else if resp.Header.Get("Content-Encoding") == "" {
 				o.sse = strings.HasPrefix(resp.Header.Get("Content-Type"), "text/event-stream")

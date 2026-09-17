@@ -13,6 +13,10 @@
   map models, filter unknown fields/events, or replay generation automatically.
 - Keep content inspection small and read-only. Any added inspection must directly
   support account selection, continuity, or usage observation.
+- Explicit Remote KB sessions are the scoped exception: register immutable KB
+  items, inherit the binding for children, and insert them into inference input
+  before conversation/compaction history. Exclude them from compaction requests.
+  Preserve other JSON fields and response bytes; keep unregistered relay intact.
 - Reuse the narrow CPA OAuth/quota code under internal/cpa. Preserve MIT notice,
   pin the source commit, and document adaptations in third_party/cpa.
 - Never log credentials or arbitrary OAuth error response bodies.
