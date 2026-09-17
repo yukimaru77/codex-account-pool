@@ -87,7 +87,15 @@ func (s *kbConversation) event(body []byte) {
 		}
 		s.lastID = event.Get("response.id").String()
 		s.lastKB = s.pendingKB
-		s.lastInput = append(s.pendingInput, s.output...)
+		// The trigger is a request command, not retained conversation history.
+		// Re-expanding a subsequent inference must not request compaction again.
+		retained := s.pendingInput[:0]
+		for _, item := range s.pendingInput {
+			if gjson.GetBytes(item, "type").String() != "compaction_trigger" {
+				retained = append(retained, item)
+			}
+		}
+		s.lastInput = append(retained, s.output...)
 		s.pendingInput, s.output = nil, nil
 	case "response.failed", "error":
 		s.pendingInput, s.output = nil, nil

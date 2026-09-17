@@ -56,7 +56,12 @@ func TestRemoteKBRegistrationPersistsImmutableSnapshotAndInheritance(t *testing.
 	// Restart, inherit, restart again: neither descendants nor a resume need the
 	// parent process or original Git checkout to remain available.
 	h.RemoteKB = newRemoteKBStore(h.Config.StateDir)
-	child, err := h.RemoteKB.resolve(kbIdentity{session: "child", thread: "child-window", parent: "root"})
+	alias, err := h.RemoteKB.resolve(kbIdentity{session: "root", thread: "root-window"})
+	if err != nil || alias.ID != hash {
+		t.Fatal(alias, err)
+	}
+	h.RemoteKB = newRemoteKBStore(h.Config.StateDir)
+	child, err := h.RemoteKB.resolve(kbIdentity{session: "child", thread: "child-window", parent: "root-window"})
 	if err != nil || child.ID != hash {
 		t.Fatal(child, err)
 	}
@@ -269,7 +274,7 @@ func TestRemoteKBWebSocketDeltaCompactionAndReinjection(t *testing.T) {
 	s.event([]byte(`{"type":"response.completed","response":{"id":"compact","output":[{"type":"compaction_summary","encrypted_content":"conversation-blob"}]}}`))
 	// Switching back to inference on a reused connection must restore the KB.
 	out, err = s.transform([]byte(`{"type":"response.create","previous_response_id":"compact","input":[{"role":"user","content":"next"}]}`))
-	if err != nil || !bytes.Contains(out, []byte("KB-one")) || gjson.GetBytes(out, "previous_response_id").String() != "" {
+	if err != nil || !bytes.Contains(out, []byte("KB-one")) || bytes.Contains(out, []byte("compaction_trigger")) || gjson.GetBytes(out, "previous_response_id").String() != "" {
 		t.Fatal(string(out), err)
 	}
 	// Native post-compact requests send a new full context.

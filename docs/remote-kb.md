@@ -79,3 +79,19 @@ go build -o bin/codex-pool ./cmd/codex-pool
 圧縮要求・コンパクトの除外・WebSocket差分の再利用/展開・分割/制御フレーム・応答保持を
 モック上流で検証する。ネイティブプロトコルの確認元はCodex 0.153.4系の `responses_metadata.rs`、
 `client.rs`、`compact_remote_v2_attempt.rs`、`session_startup_prewarm.rs`。
+
+### 2026-09-17の実通信
+
+MacからTailscale経由でLinuxの稼働プールに接続し、上流の実APIで確認した。
+
+- 異なる2つの架空の値をv2の暗号化KB blobにし、同じセッションへ登録。
+- WebSocketの完全入力・`previous_response_id` による差分・HTTPでKB内の値に正答。
+- WebSocketの差分でコンパクトを要求し、正規の暗号化compaction blobを取得。
+- そのblobをKB未登録の要求へ渡すと、未質問だったKB内の値への回答は `UNKNOWN`。
+- 登録セッションの圧縮後の要求では、その未質問だった値に正答。
+- 親IDを指定した別接続でも同じKBを継承して正答。
+
+この実試験はネイティブと同じAPI形式の直接要求で実施した。Macの `codex app-server` は
+KB登録前のSQLite初期化で停止したため、`kb codex --remote` のネイティブ起動から通す
+実試験は未完了。CodexのDB・設定・バイナリは修正していない。CLIの起動順序・登録失敗時の
+停止・既存コマンドとの互換性はkb-repomap側のユニットテストで検証している。

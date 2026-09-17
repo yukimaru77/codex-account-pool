@@ -162,10 +162,14 @@ func (s *remoteKBStore) resolve(m kbIdentity) (*kbSnapshot, error) {
 	defer s.mu.Unlock()
 	// A child can have its own explicit binding. Otherwise inherit and persist
 	// the parent's fixed snapshot so grandchildren and resumes use it too.
-	for _, id := range []string{m.thread, m.session} {
-		if b, err := s.lookup(id); b != nil || err != nil {
-			return b, err
+	if b, err := s.lookup(m.thread); b != nil || err != nil {
+		return b, err
+	}
+	if b, err := s.lookup(m.session); b != nil || err != nil {
+		if err == nil && m.thread != "" {
+			err = s.saveBinding(m.thread, b)
 		}
+		return b, err
 	}
 	b, err := s.lookup(m.parent)
 	if err != nil || b == nil {
