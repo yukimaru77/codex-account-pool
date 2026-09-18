@@ -37,8 +37,23 @@ func framePayloadSize(header []byte) uint64 {
 type gatedWebsocket struct {
 	io.ReadWriteCloser
 	check     func() error
+	drain     *websocketDrain
 	header    []byte
 	remaining uint64
+}
+
+func (g *gatedWebsocket) Read(p []byte) (int, error) {
+	if g.drain != nil {
+		g.drain.delivered()
+	}
+	return g.ReadWriteCloser.Read(p)
+}
+
+func (g *gatedWebsocket) Close() error {
+	if g.drain != nil {
+		g.drain.close()
+	}
+	return g.ReadWriteCloser.Close()
 }
 
 func (g *gatedWebsocket) Write(p []byte) (int, error) {
@@ -53,6 +68,9 @@ func (g *gatedWebsocket) Write(p []byte) (int, error) {
 			}
 			if opcode := g.header[0] & 15; opcode == 1 || opcode == 2 {
 				if err := g.check(); err != nil {
+					if g.drain != nil {
+						g.drain.wait()
+					}
 					return accepted, err
 				}
 			}

@@ -47,6 +47,8 @@ type Record struct {
 	Latency             time.Duration `json:"latency_ns"`
 	TTFT                time.Duration `json:"ttft_ns"`
 	Failed              bool          `json:"failed"`
+	TerminalEvent       string        `json:"terminal_event,omitempty"`
+	UsageObserved       bool          `json:"usage_observed"`
 	Fail                Failure       `json:"failure"`
 	Detail              Detail        `json:"tokens"`
 	ResponseHeaders     http.Header   `json:"-"`
@@ -119,6 +121,11 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		rawPath = ""
 		policy = RoundRobin
 	}
+	if path == "/backend-api/codex/responses" && strings.EqualFold(r.Header.Get("Upgrade"), "websocket") {
+		// Like codex-lb's direct egress, negotiate plain frames so terminal
+		// and quota events remain observable. No frame payload is rewritten.
+		r.Header.Del("Sec-WebSocket-Extensions")
+	}
 	var remoteKB *kbSnapshot
 	if path == "/backend-api/codex/responses" || path == "/backend-api/codex/responses/compact" {
 		var err error
@@ -152,7 +159,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	generate := r.Method == "POST" && strings.HasPrefix(path, "/backend-api/codex/")
 	o := newObservation(r.Context(), Record{AuthID: id, AuthIndex: id, Endpoint: r.URL.Path, Policy: policy, SessionID: r.Header.Get("Session-Id"), ThreadID: r.Header.Get("Thread-Id"), RequestedAt: time.Now(), Generate: &generate}, h.Publish)
 	o.onEvent = func(b []byte) {
-		headers := cpa.ParseCodexQuotaEventHeaders(b)
+		headers := quotaEventHeaders(b)
 		if q, ok := QuotaFromHeaders(headers, time.Now()); ok {
 			h.Scheduler.Observe(id, q)
 		}
@@ -220,10 +227,27 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				if !ok {
 					return errors.New("upgraded response is not duplex")
 				}
+				var drain *websocketDrain
 				responses := newFrames(o.event)
 				requests := newFrames(o.websocketRequest)
+				if path == "/backend-api/codex/responses" && resp.Header.Get("Sec-WebSocket-Extensions") == "" {
+					drain = newWebsocketDrain()
+					responses.lifecycle = func(event lifecycleEvent) {
+						drain.event(event)
+						if responses.large {
+							o.largeLifecycle(event)
+						}
+					}
+					requests.lifecycle = func(event lifecycleEvent) {
+						drain.request(event)
+						if requests.large {
+							o.largeLifecycle(event)
+						}
+					}
+				}
 				resp.Body = &gatedWebsocket{
 					ReadWriteCloser: &observedDuplex{ReadWriteCloser: rwc, feed: responses.feed, sent: requests.feed},
+					drain:           drain,
 					check: func() error {
 						// RR chooses at the HTTP upgrade. Checking availability must
 						// not advance the cursor before the socket's first message.

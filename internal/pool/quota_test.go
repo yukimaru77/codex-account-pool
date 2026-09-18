@@ -41,3 +41,18 @@ func TestQuotaMissingWeeklyInvalidAndExhaustedNeverInvented(t *testing.T) {
 		t.Fatal("assumed expired window automatically reset")
 	}
 }
+
+func TestModelSpecificQuotaCannotReplaceMainWeeklyBudget(t *testing.T) {
+	for _, field := range []string{"limit_id", "metered_limit_name", "limit_name", "meteredLimitName", "limitName"} {
+		for _, bucket := range []string{"codex", "GPT-5.3-Codex-Spark"} {
+			b := []byte(fmt.Sprintf(`{"type":"codex.rate_limits",%q:%q,"rate_limits":{"primary":{"used_percent":100,"window_minutes":10080,"reset_after_seconds":3600}}}`, field, bucket))
+			if _, ok := QuotaFromHeaders(quotaEventHeaders(b), testNow); ok != (bucket == "codex") {
+				t.Fatalf("wrong quota family accepted: %s", b)
+			}
+		}
+	}
+	h := http.Header{"X-Codex-Primary-Used-Percent": {"25"}, "X-Codex-Primary-Window-Minutes": {"10080"}, "X-Codex-Primary-Reset-After-Seconds": {"3600"}, "X-Codex-Active-Limit": {"primary"}, "X-Codex-Spark-Primary-Used-Percent": {"100"}}
+	if q, ok := QuotaFromHeaders(h, testNow); !ok || q.Weekly.Used != 25 {
+		t.Fatal("main header family confused with additional limit metadata")
+	}
+}

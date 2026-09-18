@@ -11,6 +11,7 @@ import (
 
 func (h *Handler) FetchQuota(ctx context.Context, id string) (Quota, error) {
 	var empty Quota
+	started := time.Now()
 	c, err := h.Store.Token(ctx, id, false)
 	if err != nil {
 		return empty, err
@@ -32,7 +33,7 @@ func (h *Handler) FetchQuota(ctx context.Context, id string) (Quota, error) {
 		b, readErr := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 		_ = resp.Body.Close()
 		if resp.StatusCode == 401 && attempt == 0 {
-			c, err = h.Store.Token(ctx, id, true)
+			c, err = h.Store.RefreshRejected(ctx, id, c.AccessToken)
 			if err != nil {
 				return empty, err
 			}
@@ -44,7 +45,11 @@ func (h *Handler) FetchQuota(ctx context.Context, id string) (Quota, error) {
 		if readErr != nil {
 			return empty, fmt.Errorf("quota read failed")
 		}
-		return ParseQuota(b, time.Now())
+		q, err := ParseQuota(b, time.Now())
+		// A slow probe must not replace newer live observations or clear an
+		// authentication failure that happened after this probe began.
+		q.Observed = started
+		return q, err
 	}
 	return empty, fmt.Errorf("quota authentication failed")
 }
@@ -77,7 +82,7 @@ func (h *Handler) Poll(ctx context.Context) error {
 				h.Scheduler.Failure(id, "quota unavailable; refresh or login may be required")
 				return
 			}
-			h.Scheduler.Observe(id, q)
+			h.Scheduler.ObserveVerified(id, q)
 		}(a.ID())
 	}
 	wg.Wait()

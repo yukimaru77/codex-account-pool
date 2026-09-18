@@ -7,8 +7,25 @@ import (
 	"strconv"
 	"time"
 
+	"codex-account-pool/internal/cpa"
 	"github.com/tidwall/gjson"
 )
+
+// Keep CPA's general parser intact, but only use the main quota family for
+// our account-wide weekly selection. All original events still pass through.
+// Adapted from codex-lb app/core/usage/live_snapshots.py.
+func quotaEventHeaders(body []byte) http.Header {
+	root := gjson.ParseBytes(body)
+	if root.Get("type").String() == "codex.rate_limits" {
+		for _, key := range []string{"limit_id", "metered_limit_name", "limit_name", "meteredLimitName", "limitName"} {
+			value := root.Get(key)
+			if value.Exists() && value.Type != gjson.Null && value.String() != "codex" {
+				return nil
+			}
+		}
+	}
+	return cpa.ParseCodexQuotaEventHeaders(body)
+}
 
 type Window struct {
 	Used    float64   `json:"used_percent"`

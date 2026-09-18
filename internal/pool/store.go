@@ -71,13 +71,31 @@ func AtomicWrite(path string, b []byte) error {
 }
 
 func withLock(path string, fn func() error) error {
+	return withContextLock(context.Background(), path, fn)
+}
+
+func withContextLock(ctx context.Context, path string, fn func() error) error {
 	f, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0600)
 	if err != nil {
 		return err
 	}
 	defer func() { _ = f.Close() }()
-	if err = unix.Flock(int(f.Fd()), unix.LOCK_EX); err != nil {
-		return err
+	for {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		err = unix.Flock(int(f.Fd()), unix.LOCK_EX|unix.LOCK_NB)
+		if err == nil {
+			break
+		}
+		if err != unix.EWOULDBLOCK && err != unix.EAGAIN {
+			return err
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(10 * time.Millisecond):
+		}
 	}
 	defer func() { _ = unix.Flock(int(f.Fd()), unix.LOCK_UN) }()
 	return fn()
@@ -183,11 +201,21 @@ func (s *Store) SetDisabled(id string, disabled bool) error {
 // Token serializes read/refresh/persist across requests and processes. It rereads
 // the credential under the lock so a rotated refresh token is never reused.
 func (s *Store) Token(ctx context.Context, id string, force bool) (Credential, error) {
+	return s.token(ctx, id, force, "")
+}
+
+// RefreshRejected refreshes only the credential actually rejected by the quota
+// probe. Another request/process may already have rotated it while we waited.
+func (s *Store) RefreshRejected(ctx context.Context, id, accessToken string) (Credential, error) {
+	return s.token(ctx, id, true, accessToken)
+}
+
+func (s *Store) token(ctx context.Context, id string, force bool, rejected string) (Credential, error) {
 	var current Credential
 	if !validID(id) {
 		return current, fmt.Errorf("invalid account identifier")
 	}
-	err := withLock(s.path(id)+".lock", func() error {
+	err := withContextLock(ctx, s.path(id)+".lock", func() error {
 		var err error
 		current, err = s.read(id)
 		if err != nil {
@@ -195,6 +223,9 @@ func (s *Store) Token(ctx context.Context, id string, force bool) (Credential, e
 		}
 		if current.Disabled {
 			return fmt.Errorf("account is disabled")
+		}
+		if rejected != "" && current.AccessToken != rejected {
+			force = false
 		}
 		exp, err := time.Parse(time.RFC3339, current.Expire)
 		if !force && err == nil && exp.After(time.Now().Add(time.Minute)) {

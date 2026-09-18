@@ -7,8 +7,10 @@ package cpa
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"strings"
@@ -299,6 +301,13 @@ func isNonRetryableRefreshErr(err error) bool {
 	if err == nil {
 		return false
 	}
-	raw := strings.ToLower(err.Error())
-	return strings.Contains(raw, "refresh_token_reused")
+	var endpoint *TokenEndpointError
+	if errors.As(err, &endpoint) {
+		return endpoint.Permanent() || (endpoint.Status != 429 && endpoint.Status < 500)
+	}
+	// A dial failure precedes the OAuth exchange. A timeout, body-read error,
+	// or invalid successful response may follow consumption of the rotating
+	// refresh token, so replaying that exchange is not safe.
+	var connection *net.OpError
+	return !errors.As(err, &connection) || connection.Op != "dial"
 }

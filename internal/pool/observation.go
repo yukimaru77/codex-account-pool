@@ -29,6 +29,8 @@ type observation struct {
 	count                                     int
 	pending                                   bool
 	lastResponse                              string
+	sawResponse, terminal                     bool
+	unobservedEvent                           bool
 }
 
 func newObservation(ctx context.Context, r Record, publish func(context.Context, Record)) *observation {
@@ -118,6 +120,8 @@ func (o *observation) sseLine(line []byte) {
 	if len(line) == 0 {
 		if !o.eventLarge {
 			o.decode(o.eventData)
+		} else {
+			o.unobservedEvent = true
 		}
 		o.eventData = nil
 		o.eventLarge = false
@@ -154,15 +158,31 @@ func (o *observation) websocketRequest(b []byte) {
 	if !gjson.ValidBytes(b) || gjson.GetBytes(b, "type").String() != "response.create" {
 		return
 	}
+	o.beginWebsocket(gjson.ParseBytes(b))
+}
+
+func (o *observation) beginWebsocket(v gjson.Result) {
 	o.record.RequestedAt = time.Now()
 	o.pending = true
+	o.sawResponse, o.terminal = true, false
 	o.record.TTFT = 0
 	o.record.Stream = true
 	generate := true
 	o.record.Generate = &generate
-	o.record.Model = gjson.GetBytes(b, "model").String()
-	o.record.ServiceTier = gjson.GetBytes(b, "service_tier").String()
-	o.record.ReasoningEffort = gjson.GetBytes(b, "reasoning.effort").String()
+	o.record.Model = v.Get("model").String()
+	o.record.ServiceTier = v.Get("service_tier").String()
+	o.record.ReasoningEffort = v.Get("reasoning.effort").String()
+}
+
+// Large messages still provide lifecycle metadata, but not invented usage.
+func (o *observation) largeLifecycle(event lifecycleEvent) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	if event.typ == "response.create" {
+		o.beginWebsocket(gjson.Result{})
+	} else {
+		o.decodeResponse(event.typ, event.id, gjson.Result{})
+	}
 }
 
 func (o *observation) decode(b []byte) {
@@ -179,21 +199,33 @@ func (o *observation) decode(b []byte) {
 	if v.Get("response").IsObject() {
 		root = v.Get("response")
 	}
+	o.decodeResponse(typ, root.Get("id").String(), root)
+}
+
+func (o *observation) decodeResponse(typ, id string, root gjson.Result) {
+	if typ == "response.created" || typ == "response.in_progress" {
+		o.sawResponse, o.terminal = true, false
+	}
+	terminal := typ == "response.completed" || typ == "response.failed" || typ == "response.incomplete" || typ == "error"
 	u := root.Get("usage")
-	failed := typ == "error" || typ == "response.failed" || root.Get("status").String() == "failed"
-	if !u.Exists() && !failed {
+	failed := typ == "error" || typ == "response.failed" || typ == "response.incomplete" || root.Get("status").String() == "failed" || root.Get("status").String() == "incomplete"
+	if !u.Exists() && !failed && !terminal {
 		return
 	}
 	// Only terminal response events are accounted. Unknown events are forwarded.
 	if strings.HasPrefix(typ, "response.") && typ != "response.completed" && typ != "response.failed" && typ != "response.incomplete" {
 		return
 	}
-	id := root.Get("id").String()
 	if id != "" && id == o.lastResponse {
 		return
 	}
 	o.lastResponse = id
+	o.terminal = terminal
 	r := o.record
+	if terminal {
+		r.TerminalEvent = typ
+	}
+	r.UsageObserved = u.IsObject()
 	if model := root.Get("model").String(); model != "" {
 		r.Model = model
 	}
@@ -211,7 +243,7 @@ func (o *observation) finish() {
 	defer o.mu.Unlock()
 	if o.count == 0 || o.pending {
 		r := o.record
-		r.Failed = r.Failed || o.sourceContext.Err() != nil
+		r.Failed = r.Failed || o.sourceContext.Err() != nil || (o.sawResponse && !o.terminal && !o.unobservedEvent)
 		r.Latency = time.Since(r.RequestedAt)
 		// No invented usage when observation is incomplete or this is a lookup.
 		o.publish(o.ctx, r)
@@ -231,6 +263,8 @@ type frames struct {
 	message           []byte
 	large             bool
 	emit              func([]byte)
+	lifecycle         func(lifecycleEvent)
+	metadata          websocketLifecycle
 }
 
 func newFrames(emit func([]byte)) *frames { return &frames{emit: emit} }
@@ -251,6 +285,7 @@ func (f *frames) feed(b []byte) {
 			f.opcode = f.header[0] & 15
 			f.fin = f.header[0]&128 != 0
 			if f.opcode == 1 || f.opcode == 2 {
+				f.metadata.reset()
 				f.message = nil
 				f.large = false
 				f.skip = f.header[0]&112 != 0
@@ -268,6 +303,15 @@ func (f *frames) feed(b []byte) {
 			n = f.remaining
 		}
 		if f.opcode < 8 && !f.skip {
+			if f.lifecycle != nil {
+				for i := uint64(0); i < n; i++ {
+					c := b[i]
+					if f.masked {
+						c ^= f.mask[(f.position+i)%4]
+					}
+					f.metadata.feed(c)
+				}
+			}
 			start := len(f.message)
 			capture(&f.message, &f.large, b[:int(n)])
 			if f.masked && !f.large {
@@ -281,6 +325,9 @@ func (f *frames) feed(b []byte) {
 		f.remaining -= n
 		if f.remaining == 0 {
 			if f.opcode < 8 && f.fin {
+				if !f.skip && f.lifecycle != nil {
+					f.lifecycle(f.metadata.value)
+				}
 				if !f.skip && !f.large {
 					f.emit(f.message)
 				}

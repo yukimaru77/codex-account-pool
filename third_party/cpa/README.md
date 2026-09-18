@@ -9,7 +9,7 @@
 - OAuth client ID、token endpoint、PKCE、JWT claims の取り出し方。
 - device authorization の要求・ポーリング・code exchange。
 - refresh token ごとの singleflight、呼び出し元キャンセルから独立した30秒の更新処理。
-- 更新の上限3回の試行、`refresh_token_reused` の再試行停止。
+- 更新の上限3回の試行。再試行の分類は下記の追加適応を適用した。
 - Codex の quota event → header の読み取りと、その単体テスト。
 - WebSocket error の `status` / `status_code` の読み取り（本文の再生成は含めない）。
 
@@ -19,6 +19,8 @@
 - HTTP client をコンストラクタから注入する。device login の対話部分は小さな callback にした。
 - CPA の token storage への保存処理は除外。このアプリの専用ファイルへロック付きで保存する。
 - OAuth エラーは本文をログに載せず、status と error code だけにする。
+- codex-lbも参照し、恒久エラーの再試行停止と、交換済みか不明な通信失敗の非再送を追加。
+  詳細・追加の出典は [codex-lb](../codex-lb/README.md)。この適応は元CPAのpinを変更しない。
 - OAuth テストは上記範囲の4件を移植。quota テストは他パッケージとの結合テストを除く。
 
 このアプリ独自の処理は `internal/pool` にある。期限の1分前からの更新判定、

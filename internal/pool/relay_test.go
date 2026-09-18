@@ -149,7 +149,10 @@ func TestEveryRequestUsesCurrentSelectedCredentialsAfterRefresh(t *testing.T) {
 				t.Fatal("refresh did not update the stored ID token")
 			}
 		case 2:
-			h.Scheduler.Observe(accounts[0].ID(), quota(5, time.Hour))
+			q := quota(5, time.Hour)
+			q.Observed = time.Now()
+			q.Weekly.Reset = time.Now().Add(time.Hour)
+			h.Scheduler.Observe(accounts[0].ID(), q)
 			want = accounts[1]
 		}
 		w := call(h, "GET", "/backend-api/wham/usage?future=unchanged", "")
@@ -171,7 +174,7 @@ func TestOpaquePayloadHeadersPathQueryAndErrorsPassThrough(t *testing.T) {
 		q := quota(90, time.Hour)
 		q.Observed = time.Now()
 		q.Weekly.Reset = time.Now().Add(time.Hour)
-		h.Scheduler.Observe(accounts[0].ID(), q)
+		h.Scheduler.ObserveVerified(accounts[0].ID(), q)
 		h.Scheduler.Cooldown(accounts[0].ID(), "/backend-api/codex/responses", time.Time{})
 		calls := 0
 		h.Transport = roundTripFunc(func(r *http.Request) (*http.Response, error) {

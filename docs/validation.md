@@ -188,7 +188,7 @@ go build -o bin/codex-pool ./cmd/codex-pool
 exit 0
 
 bridge/.venv/bin/python -m unittest discover -s bridge -v
-Ran 10 tests ... OK
+Ran 12 tests ... OK
 
 python3 -m unittest discover -s scripts -v
 Ran 21 tests ... OK
@@ -207,11 +207,15 @@ Goのlive-checkテストは不完全SSE・応答不一致・HTTPエラー・壊�
 
 ## 残っている制限・未確認事項
 
+2026-09-19のcodex-lb比較・追加変更は [比較と検証記録](codex-lb-review.md) を参照。
+OAuth競合・quota順序・終端観測・WebSocket切替を模擬上流で追加検証した。
+下記の以前の実機試験と、今回の変更のLinux反映・実機確認は別に扱う。
+
 - 実CodexのWebSocketをM%到達で切断した後の自動再接続・別アカウントでの回復は未実施。
   境界動作は模擬上流で確認した。中断APIによる回復試験とは別。
 - 保存会話のresume、検索、コネクタ実操作、上流資源IDを使うアカウント跨ぎの画像編集は未実施。
 - 一部SSEと実CodexのWebSocketで、プール側のトークン使用数は0と記録された。
-  観測できない場合に0のままにする現在の記録上の制限であり、正確な課金集計には使えない。
+  新しいコードでは `usage_observed` で未観測と実0を区別するが、過去ログは区別できず、正確な課金集計には使えない。
   アカウント選択は別途取得する週間quotaを使う。
 - 3経路比較のpool試験でモデル一覧取得の子プロセスタイムアウト／502が1回発生。
   後続の実Codex試験では同URLが200。終了付近のplugins/listにも502があり、原因は未特定。

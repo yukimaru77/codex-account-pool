@@ -27,6 +27,7 @@ type AccountStatus struct {
 type Scheduler struct {
 	mu       sync.Mutex
 	accounts map[string]AccountStatus
+	failedAt map[string]time.Time
 	last     map[string]string
 	reserve  float64
 	maxAge   time.Duration
@@ -34,7 +35,7 @@ type Scheduler struct {
 }
 
 func NewScheduler(cfg Config) *Scheduler {
-	return &Scheduler{accounts: make(map[string]AccountStatus), last: make(map[string]string), reserve: cfg.ReservePercent, maxAge: cfg.maxAge(), now: time.Now}
+	return &Scheduler{accounts: make(map[string]AccountStatus), failedAt: make(map[string]time.Time), last: make(map[string]string), reserve: cfg.ReservePercent, maxAge: cfg.maxAge(), now: time.Now}
 }
 func (s *Scheduler) Configure(cfg Config) {
 	s.mu.Lock()
@@ -58,18 +59,34 @@ func (s *Scheduler) Sync(accounts []Credential) {
 	for id := range s.accounts {
 		if !seen[id] {
 			delete(s.accounts, id)
+			delete(s.failedAt, id)
 		}
 	}
 }
 func (s *Scheduler) Observe(id string, q Quota) {
+	s.observe(id, q, false)
+}
+
+// Only a successful dedicated quota probe can clear an account failure.
+// Late events on an older streaming connection do not prove credentials work.
+func (s *Scheduler) ObserveVerified(id string, q Quota) {
+	s.observe(id, q, true)
+}
+
+func (s *Scheduler) observe(id string, q Quota, verified bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	a, ok := s.accounts[id]
 	if !ok {
 		return
 	}
-	a.Quota = q
-	a.Error = ""
+	if !q.Observed.Before(a.Quota.Observed) {
+		a.Quota = q
+	}
+	if verified && !q.Observed.Before(s.failedAt[id]) {
+		a.Error = ""
+		delete(s.failedAt, id)
+	}
 	s.accounts[id] = a
 }
 func (s *Scheduler) Failure(id, message string) {
@@ -80,6 +97,7 @@ func (s *Scheduler) Failure(id, message string) {
 		return
 	}
 	a.Error = message
+	s.failedAt[id] = s.now()
 	s.accounts[id] = a
 }
 func (s *Scheduler) Cooldown(id, path string, until time.Time) {
@@ -92,7 +110,9 @@ func (s *Scheduler) Cooldown(id, path string, until time.Time) {
 	if a.Cooldowns == nil {
 		a.Cooldowns = map[string]time.Time{}
 	}
-	a.Cooldowns[path] = until
+	if until.IsZero() || until.After(a.Cooldowns[path]) {
+		a.Cooldowns[path] = until
+	}
 	s.accounts[id] = a
 }
 

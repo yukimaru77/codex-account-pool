@@ -142,3 +142,60 @@ func TestObservationReportsTruncatedStreamWithoutChangingReadError(t *testing.T)
 		t.Fatalf("records=%+v", records)
 	}
 }
+
+func TestCleanEOFDoesNotMeanResponseCompleted(t *testing.T) {
+	for _, terminal := range []string{"", "response.completed", "response.incomplete", "response.failed"} {
+		t.Run(terminal, func(t *testing.T) {
+			var records []Record
+			o := newObservation(context.Background(), Record{}, func(_ context.Context, r Record) { records = append(records, r) })
+			o.sse = true
+			o.response([]byte("data: {\"type\":\"response.created\",\"response\":{\"id\":\"r\"}}\n\n"))
+			if terminal != "" {
+				o.response([]byte("data: {\"type\":\"" + terminal + "\",\"response\":{\"id\":\"r\"}}\n\n"))
+			}
+			o.responseDone()
+			o.finish()
+			if len(records) != 1 {
+				t.Fatalf("records=%+v", records)
+			}
+			r := records[0]
+			if r.Failed != (terminal != "response.completed") || r.TerminalEvent != terminal || r.UsageObserved {
+				t.Fatalf("incorrect terminal accounting: %+v", r)
+			}
+		})
+	}
+}
+
+func TestObservedZeroUsageIsDistinctFromMissingUsage(t *testing.T) {
+	var records []Record
+	o := newObservation(context.Background(), Record{}, func(_ context.Context, r Record) { records = append(records, r) })
+	o.event([]byte(`{"type":"response.completed","response":{"id":"r","usage":{"input_tokens":0,"output_tokens":0,"total_tokens":0}}}`))
+	o.finish()
+	if len(records) != 1 || !records[0].UsageObserved || records[0].Detail.TotalTokens != 0 || records[0].Failed {
+		t.Fatalf("records=%+v", records)
+	}
+}
+
+func TestLargeTerminalRecordsCompletionWithoutInventingUsage(t *testing.T) {
+	var records []Record
+	o := newObservation(context.Background(), Record{}, func(_ context.Context, r Record) { records = append(records, r) })
+	o.largeLifecycle(lifecycleEvent{typ: "response.create"})
+	o.largeLifecycle(lifecycleEvent{typ: "response.created", id: "r"})
+	o.largeLifecycle(lifecycleEvent{typ: "response.completed", id: "r"})
+	o.finish()
+	if len(records) != 1 || records[0].Failed || records[0].TerminalEvent != "response.completed" || records[0].UsageObserved {
+		t.Fatalf("records=%+v", records)
+	}
+}
+
+func TestSkippedSSEEventDoesNotProveAnIncompleteResponse(t *testing.T) {
+	var records []Record
+	o := newObservation(context.Background(), Record{}, func(_ context.Context, r Record) { records = append(records, r) })
+	o.sse = true
+	o.response([]byte("data: {\"type\":\"response.created\"}\n\n"))
+	o.response([]byte("data: {\"type\":\"response.completed\",\"large\":\"" + strings.Repeat("a", observationLimit) + "\"}\n\n"))
+	o.finish()
+	if len(records) != 1 || records[0].Failed || records[0].TerminalEvent != "" || records[0].UsageObserved {
+		t.Fatalf("unknown completion/usage was treated as proven failure: %+v", records)
+	}
+}

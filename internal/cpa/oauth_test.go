@@ -2,7 +2,9 @@ package cpa
 
 import (
 	"context"
+	"errors"
 	"io"
+	"net"
 	"net/http"
 	"strings"
 	"sync"
@@ -12,6 +14,54 @@ import (
 
 	"golang.org/x/sync/singleflight"
 )
+
+func TestRefreshErrorClassificationDoesNotReplayAmbiguousExchanges(t *testing.T) {
+	for _, code := range []string{"refresh_token_expired", "refresh_token_reused", "refresh_token_invalidated",
+		"invalid_grant", "token_invalidated", "token_expired", "app_session_terminated",
+		"account_session_expired", "account_auth_invalidated", "invalid_refresh_token",
+		"account_deactivated", "account_suspended", "account_deleted"} {
+		t.Run(code, func(t *testing.T) {
+			err := tokenError("token refresh", 400, []byte(`{"error":{"code":"`+code+`","message":"private body"}}`))
+			if !isNonRetryableRefreshErr(err) || strings.Contains(err.Error(), "private body") {
+				t.Fatalf("incorrect classification or leaked body: %v", err)
+			}
+		})
+	}
+	for _, tc := range []struct {
+		err  error
+		stop bool
+	}{
+		{&net.OpError{Op: "dial", Net: "tcp", Err: errors.New("refused")}, false},
+		{&net.OpError{Op: "read", Net: "tcp", Err: errors.New("timeout")}, true},
+		{io.ErrUnexpectedEOF, true},
+		{context.DeadlineExceeded, true},
+		{tokenError("token refresh", 401, nil), true},
+		{tokenError("token refresh", 429, nil), false},
+		{tokenError("token refresh", 503, nil), false},
+	} {
+		if got := isNonRetryableRefreshErr(tc.err); got != tc.stop {
+			t.Errorf("%v: stop=%v want %v", tc.err, got, tc.stop)
+		}
+	}
+}
+
+type interruptedTokenBody struct{}
+
+func (interruptedTokenBody) Read([]byte) (int, error) { return 0, io.ErrUnexpectedEOF }
+func (interruptedTokenBody) Close() error             { return nil }
+
+func TestRefreshDoesNotRetryAConsumedTokenAfterBrokenResponse(t *testing.T) {
+	for _, body := range []io.ReadCloser{interruptedTokenBody{}, io.NopCloser(strings.NewReader(`{"access_token":`))} {
+		calls := 0
+		auth := NewCodexAuth(&http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+			calls++
+			return &http.Response{StatusCode: 200, Header: make(http.Header), Body: body}, nil
+		})})
+		if _, err := auth.RefreshTokensWithRetry(context.Background(), "rotating", 3); err == nil || calls != 1 {
+			t.Fatalf("ambiguous exchange replayed: calls=%d err=%v", calls, err)
+		}
+	}
+}
 
 type roundTripFunc func(*http.Request) (*http.Response, error)
 

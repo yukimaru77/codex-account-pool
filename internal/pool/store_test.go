@@ -11,7 +11,87 @@ import (
 	"time"
 
 	"codex-account-pool/internal/cpa"
+	"golang.org/x/sys/unix"
 )
+
+func TestRejectedTokenRefreshReusesConcurrentRotationAcrossStores(t *testing.T) {
+	var calls atomic.Int64
+	refresh := func(context.Context, string) (*cpa.CodexTokenData, error) {
+		calls.Add(1)
+		return &cpa.CodexTokenData{AccessToken: "new-access", RefreshToken: "new-refresh", Expire: time.Now().Add(time.Hour).Format(time.RFC3339)}, nil
+	}
+	s, _ := OpenStore(t.TempDir(), refresh)
+	s2, _ := OpenStore(s.Dir, refresh)
+	c := credential("a")
+	id, err := s.Login(c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var wg sync.WaitGroup
+	for i := 0; i < 20; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			store := s
+			if i%2 == 0 {
+				store = s2
+			}
+			got, err := store.RefreshRejected(context.Background(), id, c.AccessToken)
+			if err != nil || got.AccessToken != "new-access" {
+				t.Errorf("refresh result: %v", err)
+			}
+		}(i)
+	}
+	wg.Wait()
+	if calls.Load() != 1 {
+		t.Fatalf("rotated %d times for the same rejected token", calls.Load())
+	}
+	// A delayed 401 that arrives after rotation must also reuse the new token.
+	if _, err := s2.RefreshRejected(context.Background(), id, c.AccessToken); err != nil {
+		t.Fatal(err)
+	}
+	if calls.Load() != 1 {
+		t.Fatal("delayed rejection refreshed the already-rotated token")
+	}
+}
+
+func TestTokenLockWaitCanBeCancelledWithoutTouchingCredentials(t *testing.T) {
+	s, _ := OpenStore(t.TempDir(), func(context.Context, string) (*cpa.CodexTokenData, error) {
+		t.Error("cancelled waiter refreshed")
+		return nil, errors.New("unexpected")
+	})
+	c := credential("a")
+	id, err := s.Login(c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	before, _ := os.ReadFile(s.path(id))
+	f, err := os.OpenFile(s.path(id)+".lock", os.O_RDWR|os.O_CREATE, 0600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	if err := unix.Flock(int(f.Fd()), unix.LOCK_EX); err != nil {
+		t.Fatal(err)
+	}
+	defer unix.Flock(int(f.Fd()), unix.LOCK_UN)
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { _, err := s.Token(ctx, id, true); done <- err }()
+	cancel()
+	select {
+	case err := <-done:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatal(err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("cancelled waiter stayed blocked on the lock")
+	}
+	after, _ := os.ReadFile(s.path(id))
+	if string(after) != string(before) {
+		t.Fatal("cancelled waiter changed credentials")
+	}
+}
 
 func credential(account string) Credential {
 	return Credential{Type: "codex", CodexTokenData: cpa.CodexTokenData{AccountID: account, AccessToken: "access-" + account, RefreshToken: "refresh-" + account, Expire: time.Now().Add(time.Hour).UTC().Format(time.RFC3339)}}
