@@ -1,4 +1,4 @@
-# 検証状況（2026-09-16）
+# 検証状況（2026-09-19更新）
 
 ## 今回の結果
 
@@ -205,14 +205,46 @@ WebSocket生バイト保持も検証する。scriptsのテストは偽CLI/app-se
 応答不一致を失敗にすること、早着した完了通知と保存権限を確認する。
 Goのlive-checkテストは不完全SSE・応答不一致・HTTPエラー・壊れたPNGを成功扱いしないことを確認する。
 
+## 2026-09-19 Linux反映と実CodexのWebSocket切り替え
+
+実装commit `6ccca488e792caf52c00e848f836d0a6ff724d2b` をLinuxに反映した。
+`go test -race ./...` と `go build -o bin/codex-pool.next ./cmd/codex-pool` が成功。
+Supervisorで再起動後 `RUNNING`、`go version -m bin/codex-pool` で上記revisionと
+`vcs.modified=false` を確認した。本番 `pool.json` の前後SHA-256は一致した。
+
+MacのHerdr上で、既存のCodex v0.153.4を通常の `codex --yolo` 相当の引数で起動した。
+通信捕捉を起動前に準備するため、同じPIDで待機後にCodexをexecする試験用ラッパーを使用。
+Codexへ設定・環境変数を追加していない。モデルは既存設定の `gpt-6-astra low`。
+検証用の独立relayは本番と同じStore・Handler・Scheduler・実上流を使い、
+M%境界だけをそのプロセス内のquota観測へ注入した。本番の残量・設定・アカウント有効状態は変更しない。
+
+| 操作・観測（UTC、2026-09-18） | 結果 |
+|---|---|
+| 17:47:41.387、アカウントAで120行を生成開始 | Responses WebSocket、fill-first |
+| 17:47:57.703、生成中に検証用の残量を10%へ変更 | 上流イベントは改変せず、実残量を10%まで消費する操作は行わない |
+| 開始から56.532秒で完了 | 001〜120行と終端マーカー到着、Aの `response.completed`、`failed=false` |
+| 17:48:52.984、合言葉を尋ねる1回の入力 | 同じセッションIDでBの `response.completed`、正答。手動再接続・再入力なし |
+| 17:49:54.136、通常の `/compact` | BのResponses WebSocketが12.328秒で完了。input 22444 / output 349 |
+| 17:50:06.999〜17:50:07.004、Codexの保存記録 | 同じusageの応答IDが `compaction_response_id` と一致。`message` は空、`replacement_history` に暗号化compaction item 1件（3172文字） |
+| 17:51:19.276、圧縮後に合言葉を尋ねる | Bで完了し正答 |
+
+この `/compact` は新方式のResponses経由であり、別の `/responses/compact` HTTP要求は発生しなかった。
+Codex側JSONLと号池の記録を、セッションID・時刻・input/output token数で照合した。
+Codexの設定・認証ファイル・バイナリのSHA-256は試験前後で全て一致した。
+試験用Codex・bridge・relayを停止し、Macのbridgeを既存の本番接続へ戻した。
+既存のCodex App除外設定は維持している。
+
+個別アカウント・セッションIDを含む証拠はGit管理外の `state/checks/native-rotation-20260919/` に保存。
+号池の `events.jsonl`、TUI出力、Codexファイルの前後ハッシュ、照合結果を含む。
+M%の検出は模擬観測だが、ストリーミング・切断後の再接続・別アカウントでの推論・compactは実通信。
+進行中にさらに次要求が来る場合は、別途WebSocketの模擬上流テストで終端配送後の切断を確認している。
+
 ## 残っている制限・未確認事項
 
 2026-09-19のcodex-lb比較・追加変更は [比較と検証記録](codex-lb-review.md) を参照。
 OAuth競合・quota順序・終端観測・WebSocket切替を模擬上流で追加検証した。
-下記の以前の実機試験と、今回の変更のLinux反映・実機確認は別に扱う。
+上記に今回のLinux反映・実機確認を追記した。実残量を消費してM%へ到達させる試験は行っていない。
 
-- 実CodexのWebSocketをM%到達で切断した後の自動再接続・別アカウントでの回復は未実施。
-  境界動作は模擬上流で確認した。中断APIによる回復試験とは別。
 - 保存会話のresume、検索、コネクタ実操作、上流資源IDを使うアカウント跨ぎの画像編集は未実施。
 - 一部SSEと実CodexのWebSocketで、プール側のトークン使用数は0と記録された。
   新しいコードでは `usage_observed` で未観測と実0を区別するが、過去ログは区別できず、正確な課金集計には使えない。

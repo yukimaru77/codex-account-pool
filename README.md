@@ -11,7 +11,8 @@ access/refresh/ID tokenの実更新と保存を確認済み。**
 詳細と未確認事項は [検証記録](docs/validation.md) と
 [Linuxの起動・接続手順](docs/linux-host.md) を参照。
 資源IDを理由に作成元へ固定したり要求を拒否する処理は持たない。
-WebSocket は接続内で固定される。M%到達時の実Codexの再接続と、保存会話のresumeは未検証。
+WebSocket は接続内で固定される。Codex v0.153.4で、検証用quotaをM%にした際の
+応答完了・自動再接続・別アカウントでの会話継続を確認済み。保存会話のresumeは未検証。
 
 ## Remote KB（任意のセッションのみ）
 
@@ -40,7 +41,8 @@ WebSocket は次のメッセージの開始時にも選択条件を確認する�
 本文サイズに依存しない小さなメモリで追跡し、本文はストリームのまま通す。
 この観測のため、ResponsesのWebSocket接続では `Sec-WebSocket-Extensions` を外して
 非圧縮フレームを交渉する。既知のResponses以外のWebSocketではこの交渉・完了追跡を行わない。
-Codex 自身の再接続による回復は実機では未検証。
+Codex v0.153.4で、手動再接続・再入力なしの回復を実機確認した。
+実通信と模擬quotaの区別は [検証記録](docs/validation.md#2026-09-19-linux反映と実codexのwebsocket切り替え) を参照。
 専用RR URLのWebSocketは接続ごとに巡回し、接続内は同じアカウントを使う。
 
 認証ヘッダーを選択アカウントの Bearer と Account ID に替える。Remote KBを除き本文を再生成せず、

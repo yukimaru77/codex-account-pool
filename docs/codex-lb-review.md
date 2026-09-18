@@ -86,8 +86,16 @@ WebSocketでは進行中に次要求が来る状況、completed/failed/incomplet
 
 ## 実機確認と採用しなかった範囲
 
-- 今回の変更はローカル検証済み。Linuxへの反映と、実CodexでM%に達した後の自動再接続は未確認。
-  SSH環境登録は `remote probe timed out after 20s`。Tailscale SSHの追加認証が必要な状態。
+- 実装commit `6ccca488e792caf52c00e848f836d0a6ff724d2b` をLinuxへ反映した。
+  Linuxでも `go test -race ./...` とビルドが成功。Supervisorの `RUNNING` と、
+  `go version -m bin/codex-pool` の同commit・`vcs.modified=false` を確認した。
+- 実Codex v0.153.4のWebSocketで、生成中に検証用schedulerの残量だけを10%に設定した。
+  120行の応答は最後まで届き、次の1回の入力は別アカウントで完了した。
+  セッションIDは同じで、手動再接続・再入力なしに切替前の合言葉を再現した。
+  本番quotaや上流の返却イベントは改変していない。実残量を消費して10%にした試験ではない。
+- 続けて通常の `/compact` がResponses経由で完了し、暗号化compaction itemを保存した。
+  圧縮後の会話も同じ合言葉を再現した。Codex設定・認証ファイル・バイナリの前後SHA-256は一致。
+  時刻・usageの照合と試験範囲は [実機検証記録](validation.md#2026-09-19-linux反映と実codexのwebsocket切り替え) を参照。
 - 完了追跡は既知のResponsesイベントを対象とし、未知のプロトコルを拒否しない。
   usageの観測上限は従来どおり1 MiB。大きなSSE等の未観測を成功完了や実消費0と断定しない。
 - 元リポジトリのprovider設定、DB、Dashboard、クラスタ、重み付け、日単位reset bucket、
