@@ -62,7 +62,8 @@ chmod 600 bridge.json
 {
   "state_dir": "state",
   "origin": "https://pool.example:18473",
-  "private_http": false
+  "private_http": false,
+  "exclude_codex_app": false
 }
 ```
 
@@ -149,6 +150,42 @@ bridge/.venv/bin/python bridge/run.py pool --config bridge.json \
 
 **実行中のCodexは作業を終えてから再起動する。** 起動前の接続はそのまま残る場合がある。
 ブリッジが動作している間、中継が有効になる。Mac起動時の自動起動は設定しない。
+
+### Codex Appは直接接続し、CLIだけ号池を使う
+
+Macの `bridge.json` に `"exclude_codex_app": true` を設定し、ブリッジを再起動する。
+一度の起動だけ指定する場合は次のオプションを使う。
+
+```bash
+bridge/.venv/bin/python bridge/run.py pool --config bridge.json \
+  --exclude-codex-app --mitmdump bridge/.venv/bin/mitmdump
+```
+
+Codex App（`Codex.app` または `ChatGPT.app`）内の実行ファイルを、Local Captureの
+捕捉対象から外す。App内の `codex` やhelperも対象。Appの通信は号池・透過ブリッジを
+経由せず、元の接続先・ログインを使う。通常のCLIは引き続き号池へ送る。
+Codex本体の設定・認証・環境変数は変更しない。Linux側の変更も不要。
+
+既定値は `false`（従来どおりAppも捕捉）。CLIの `--no-exclude-codex-app` で
+設定ファイルの `true` を一度だけ上書きできる。切り替え後、Appの実行中の作業を終えて
+Appを再起動すると、既存の接続も切り替わる。
+
+判定はプロセス名だけでなく実行ファイルのパスに基づく。
+App内蔵の `codex` をターミナルから直接実行した場合も除外される。
+Appバンドルを別名に変更した環境では `--capture 'codex,Codex,!/変更後の名前.app/'`
+で明示できる。除外中のAppには、号池が行うRemote KBの挿入も適用されない。
+
+仕組みはmitmproxyの [Local Captureの除外指定](https://docs.mitmproxy.org/stable/concepts/modes/#intercept-specs)
+と、macOS実装の [実行ファイルパスの部分一致](https://github.com/mitmproxy/mitmproxy_rs/blob/main/mitmproxy-macos/redirector/network-extension/InterceptConf.swift)
+を使う。HTTPヘッダーやリクエスト本文でAppを推測する処理は追加しない。
+
+2026-09-18のMac実機確認では、同名 `codex` のTLS試験用実行ファイルをCLI相当の場所と
+`Codex.app/Contents/MacOS/`、`ChatGPT.app/Contents/Resources/` に配置した。
+CLI側だけmitmproxyの証明書、App側2件は公式サイトの証明書を受け取り、いずれもTLS検証に成功した。
+この試験はHTTP本文・認証情報を送信していない。別途、標準Codex CLIの実要求が号池へ転送され、
+`CLI_POOL_OK` と応答することも確認した。Appの全機能の動作試験ではない。
+
+### CLIの実通信テスト
 
 全プロセス対象のブリッジを停止した状態で、次のPID限定の実通信テストも使える。
 

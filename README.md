@@ -110,6 +110,10 @@ Macでは [bridge.example.json](bridge.example.json) を `bridge.json` にコピ
 python3 bridge/run.py pool --config bridge.json
 ```
 
+Codex Appは直接接続しCLIだけ号池を使う場合、Macの `bridge.json` に
+`"exclude_codex_app": true` を追加してブリッジを再起動する。
+起動時の `--exclude-codex-app` でも指定可能。詳細は [Mac導入手順](docs/mac-client.md#codex-appは直接接続しcliだけ号池を使う)。
+
 `origin` の末尾に `/v1` は付けない。Tailscaleなどの暗号化経路を確認してHTTPを使う場合だけ、
 `bridge.json` の `private_http` を `true` にする。CLIの `--origin` は設定値より優先される。
 既存の `pool.json` の `listen` から接続先を決める起動方法も使える。

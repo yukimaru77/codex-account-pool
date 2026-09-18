@@ -79,7 +79,8 @@ def main():
                 runner = importlib.util.module_from_spec(spec)
                 spec.loader.exec_module(runner)
                 bridge_args = argparse.Namespace(mode=args.mode, config=str(config_path), capture=str(native.pid),
-                                                 origin=args.origin, private_http=args.private_http, mitmdump=args.mitmdump)
+                                                 origin=args.origin, private_http=args.private_http, mitmdump=args.mitmdump,
+                                                 exclude_codex_app=None)
                 bridge = subprocess.Popen(runner.command(bridge_args), stdout=proxy_output, stderr=subprocess.STDOUT,
                                           env=dict(os.environ, PYTHONUNBUFFERED="1"), start_new_session=True)
                 deadline = time.monotonic() + 30

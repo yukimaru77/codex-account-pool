@@ -127,7 +127,7 @@ class BridgeTests(unittest.TestCase):
             config = root / "pool.json"
             config.write_text(json.dumps({"state_dir": "state", "listen": "127.0.0.1:18473"}))
             args = argparse.Namespace(mode="ca", config=str(config), capture="12345", origin=None,
-                                      private_http=False, mitmdump="/test/mitmdump")
+                                      private_http=False, mitmdump="/test/mitmdump", exclude_codex_app=None)
             self.assertNotIn("--mode", command(args))
             (root / "state/ca/mitmproxy-ca-cert.pem").touch()
             args.mode = "pool"
@@ -150,7 +150,7 @@ class BridgeTests(unittest.TestCase):
                                                   "private_http": private_http}))
                     before = config.read_bytes()
                     args = argparse.Namespace(mode="ca", config=str(config), capture="12345", origin=None,
-                                              private_http=False, mitmdump="/test/mitmdump")
+                                              private_http=False, mitmdump="/test/mitmdump", exclude_codex_app=None)
                     command(args)
                     (root / "state/ca/mitmproxy-ca-cert.pem").touch()
                     args.mode = "pool"
@@ -163,6 +163,36 @@ class BridgeTests(unittest.TestCase):
                     args.mode = "observe"
                     self.assertFalse(any(value.startswith("pool_origin=") for value in command(args)))
                     self.assertEqual(config.read_bytes(), before)
+
+    def test_launcher_can_exclude_app_bundles_without_changing_relay(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            config = root / "bridge.json"
+            ca = root / "state/ca"
+            ca.mkdir(parents=True)
+            (ca / "mitmproxy-ca-cert.pem").touch()
+            for mode in ("pool", "observe"):
+                for configured in (None, False, True):
+                    data = {"state_dir": "state", "origin": "https://pool.example"}
+                    if configured is not None:
+                        data["exclude_codex_app"] = configured
+                    config.write_text(json.dumps(data))
+                    before = config.read_bytes()
+                    for cli in (None, False, True):
+                        for capture in ("codex,Codex", "12345", "codex,!other"):
+                            with self.subTest(mode=mode, configured=configured, cli=cli, capture=capture):
+                                args = argparse.Namespace(mode=mode, config=str(config), capture=capture,
+                                                          origin=None, private_http=False,
+                                                          mitmdump="/test/mitmdump", exclude_codex_app=False)
+                                baseline = command(args)
+                                args.exclude_codex_app = cli
+                                actual = command(args)
+                                enabled = configured if cli is None else cli
+                                expected = baseline.copy()
+                                if enabled:
+                                    expected[expected.index("--mode") + 1] += ",!/Codex.app/,!/ChatGPT.app/"
+                                self.assertEqual(actual, expected)
+                                self.assertEqual(config.read_bytes(), before)
 
 
 if __name__ == "__main__":

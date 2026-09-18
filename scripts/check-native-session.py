@@ -62,7 +62,8 @@ def main():
         if args.mode == "pool":
             bridge_args = argparse.Namespace(mode="pool", config=str(cfg_path), capture=str(native.pid),
                                              origin=args.origin, private_http=args.private_http,
-                                             mitmdump=str(root / "bridge/.venv/bin/mitmdump"))
+                                             mitmdump=str(root / "bridge/.venv/bin/mitmdump"),
+                                             exclude_codex_app=None)
             bridge = subprocess.Popen(runner.command(bridge_args), stdout=proxy_log, stderr=subprocess.STDOUT,
                                       env=dict(os.environ, PYTHONUNBUFFERED="1"), start_new_session=True)
             deadline = time.monotonic() + 30

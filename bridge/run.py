@@ -28,7 +28,15 @@ def command(args):
         raise ValueError("first run 'bridge/run.py ca' and trust that dedicated CA as documented")
     if not args.capture or args.capture.startswith("!"):
         raise ValueError("--capture must name only the intended Codex process(es) or PID(s)")
-    cmd += ["--mode", "local:" + args.capture,
+    capture = args.capture
+    exclude_app = args.exclude_codex_app
+    if exclude_app is None:
+        exclude_app = config.get("exclude_codex_app", False)
+    if exclude_app:
+        # macOS Local Capture matches the full executable path. App helpers
+        # also use the name "codex", so excluding just "Codex" is insufficient.
+        capture += ",!/Codex.app/,!/ChatGPT.app/"
+    cmd += ["--mode", "local:" + capture,
             "--set", r"allow_hosts=^chatgpt\.com:443$",
             "--set", "connection_strategy=lazy", "--set", "upstream_cert=false",
             "--set", "websocket=false", "--set", "rawtcp=true",
@@ -51,6 +59,8 @@ def main():
     parser.add_argument("mode", choices=["ca", "observe", "pool"])
     parser.add_argument("--config", default="pool.json")
     parser.add_argument("--capture", default="codex,Codex")
+    parser.add_argument("--exclude-codex-app", action=argparse.BooleanOptionalAction, default=None,
+                        help="leave Codex.app/ChatGPT.app bundle processes on their direct connection (Mac); also configurable as exclude_codex_app")
     parser.add_argument("--origin", help="pool origin; defaults to config origin or listen address")
     parser.add_argument("--private-http", action="store_true", help="allow HTTP over a verified private tunnel; also configurable in bridge.json")
     parser.add_argument("--mitmdump")
