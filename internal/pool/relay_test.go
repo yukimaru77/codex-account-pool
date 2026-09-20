@@ -85,7 +85,14 @@ func TestAllNormalEndpointsUseFillFirstAndOnlyCustomURLsUseRoundRobin(t *testing
 	for path := range h.Config.RoundRobin {
 		selected = nil
 		for range 6 {
-			w := call(h, "POST", path, `{"input":[{"type":"compaction_trigger"}],"future":"unchanged"}`)
+			body := `{"input":[{"type":"compaction_trigger"}],"future":"unchanged"}`
+			if path == "/_pool/rr/images/generations" {
+				body = `{"prompt":"test"}`
+			}
+			if path == "/_pool/rr/images/edits" {
+				body = `{"prompt":"test","images":[{"image_url":"data:image/png;base64,AA=="}]}`
+			}
+			w := call(h, "POST", path, body)
 			if w.Code != 200 {
 				t.Fatal(w.Code)
 			}

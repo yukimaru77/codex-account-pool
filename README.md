@@ -176,6 +176,14 @@ Linuxでの実リフレッシュと保存の確認は [検証記録](docs/valida
 
 ## round-robin 専用入口
 
+画像用の `/_pool/rr/images/generations` は `{"prompt":"画像の指示"}`、
+`/_pool/rr/images/edits` は `{"prompt":"編集指示","images":[{"image_url":"data:image/png;base64,..."}]}`
+のみをPOSTする。編集は1〜5枚。model・quality・size・background・n等の指定は400になる。
+内部で Codex CLI 0.155.1 と同じ `model: gpt-image-2`、quality/size/background: auto に固定し、nは省略する。
+通常の画像URLは従来どおり素通し。画像以外の専用RRも従来どおり。
+画像RRの転送先は `/backend-api/codex/images/generations` と `/backend-api/codex/images/edits`。
+転送先設定が変わった場合は503で停止するため、Codex更新時に画像API実装と照合する。
+
 `init` が生成する `pool.json` の設定:
 
 ```json

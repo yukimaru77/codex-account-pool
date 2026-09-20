@@ -11,6 +11,10 @@
   Do not add a native route allowlist or reject unfamiliar request fields.
 - Relay original bytes. Never regenerate request/response JSON, normalize tools,
   map models, filter unknown fields/events, or replay generation automatically.
+- User-requested exception: the two /_pool/rr/images endpoints accept only prompt
+  and images, and construct fixed Codex-compatible image requests. Native routes
+  and image response bytes remain unchanged. Review constants against the installed
+  Codex source when upgrading; do not silently follow changed upstream paths.
 - Keep content inspection small and read-only. Any added inspection must directly
   support account selection, continuity, or usage observation.
 - Explicit Remote KB sessions are the scoped exception: register immutable KB

@@ -121,6 +121,11 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		rawPath = ""
 		policy = RoundRobin
 	}
+	if policy == RoundRobin && (r.URL.Path == "/_pool/rr/images/generations" || r.URL.Path == "/_pool/rr/images/edits") {
+		if !prepareImageRR(w, r, path) {
+			return
+		}
+	}
 	if path == "/backend-api/codex/responses" && strings.EqualFold(r.Header.Get("Upgrade"), "websocket") {
 		// Like codex-lb's direct egress, negotiate plain frames so terminal
 		// and quota events remain observable. No frame payload is rewritten.

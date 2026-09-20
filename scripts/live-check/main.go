@@ -367,7 +367,11 @@ func (c *check) images() {
 	h := c.handler(nil)
 	body := map[string]any{"model": "gpt-image-2", "prompt": "A plain blue circle centered on a white square background. No text.", "quality": "low", "size": "1024x1024", "n": 1}
 	for _, path := range []string{"/backend-api/codex/images/generations", "/_pool/rr/images/generations"} {
-		data, ok := c.request(h, "image-generation", "POST", path, body, "")
+		requestBody := body
+		if strings.HasPrefix(path, "/_pool/") {
+			requestBody = map[string]any{"prompt": body["prompt"]}
+		}
+		data, ok := c.request(h, "image-generation", "POST", path, requestBody, "")
 		if !ok {
 			continue
 		}
@@ -387,6 +391,7 @@ func (c *check) images() {
 		editPath := "/backend-api/codex/images/edits"
 		if strings.HasPrefix(path, "/_pool/") {
 			editPath = "/_pool/rr/images/edits"
+			edit = map[string]any{"prompt": edit["prompt"], "images": edit["images"]}
 		}
 		data, ok = c.request(h, "image-edit", "POST", editPath, edit, "")
 		if ok {
