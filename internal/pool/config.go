@@ -11,7 +11,8 @@ import (
 )
 
 type Route struct {
-	Path string `json:"upstream_path"`
+	Path    string            `json:"upstream_path"`
+	Headers map[string]string `json:"headers,omitempty"`
 }
 
 type Config struct {
@@ -69,6 +70,16 @@ func LoadConfig(path string) (Config, error) {
 		return c, err
 	}
 	for endpoint, route := range c.RoundRobin {
+		for name, value := range route.Headers {
+			switch strings.ToLower(name) {
+			case "user-agent", "originator", "accept", "content-type":
+			default:
+				return c, fmt.Errorf("unsupported RR header %q", name)
+			}
+			if strings.TrimSpace(value) == "" || strings.ContainsAny(value, "\r\n") {
+				return c, fmt.Errorf("invalid RR header %q", name)
+			}
+		}
 		if !strings.HasPrefix(endpoint, "/_pool/rr/") || strings.ContainsAny(endpoint, "?#%") || !strings.HasPrefix(route.Path, "/") {
 			return c, fmt.Errorf("invalid round-robin endpoint %q", endpoint)
 		}

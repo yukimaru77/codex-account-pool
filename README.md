@@ -176,6 +176,12 @@ Linuxでの実リフレッシュと保存の確認は [検証記録](docs/valida
 
 ## round-robin 専用入口
 
+各 `round_robin_endpoints` の `headers` に `User-Agent`、`originator`、`Accept`、
+`Content-Type` を設定できる。号池が上流へ送る際に毎回上書きする（通常URLには適用しない）。
+実機で観測した値はLinux側のGit管理外 `pool.json` に保存する。認証は従来どおり選択した
+アカウントから設定し、認証ヘッダーや一時的なセッションIDはこの設定に入れない。
+HTTP/SSEとWebSocketの接続専用ヘッダーは混用しない。Codex更新後は実通信と再照合する。
+
 画像用の `/_pool/rr/images/generations` は `{"prompt":"画像の指示"}`、
 `/_pool/rr/images/edits` は `{"prompt":"編集指示","images":[{"image_url":"data:image/png;base64,..."}]}`
 のみをPOSTする。編集は1〜5枚。model・quality・size・background・n等の指定は400になる。

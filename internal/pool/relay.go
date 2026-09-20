@@ -190,6 +190,11 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			pr.Out.URL.RawPath = rawPath
 			pr.Out.URL.RawQuery = pr.In.URL.RawQuery
 			stripIdentity(pr.Out.Header)
+			if policy == RoundRobin {
+				for name, value := range h.Config.RoundRobin[r.URL.Path].Headers {
+					pr.Out.Header.Set(name, value)
+				}
+			}
 			pr.Out.Header.Set("Authorization", "Bearer "+c.AccessToken)
 			pr.Out.Header.Set("Chatgpt-Account-Id", c.AccountID)
 			pr.Out.Trailer = pr.In.Trailer.Clone()
