@@ -150,7 +150,17 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
-	id, err := h.Scheduler.Select(policy, path, "")
+	pinned := ""
+	if policy == RoundRobin {
+		if values, present := r.Header[http.CanonicalHeaderKey("X-Pool-Account")]; present {
+			if len(values) != 1 || strings.TrimSpace(values[0]) == "" || strings.ContainsAny(values[0], " ,\t\r\n") {
+				http.Error(w, "X-Pool-Account must contain one full auth_index", 400)
+				return
+			}
+			pinned = values[0]
+		}
+	}
+	id, err := h.Scheduler.Select(policy, path, pinned)
 	if err != nil {
 		http.Error(w, err.Error(), 503)
 		return
@@ -302,7 +312,7 @@ func (h *Handler) observeCooldown(id, path string, headers http.Header) {
 func identityHeader(name string) bool {
 	n := strings.ToLower(strings.ReplaceAll(name, "_", "-"))
 	switch n {
-	case "authorization", "cookie", "cookie2", "x-api-key", "api-key",
+	case "authorization", "cookie", "cookie2", "x-api-key", "api-key", "x-pool-account",
 		"account", "account-id", "chatgpt-account-id", "openai-account-id", "x-account-id",
 		"workspace", "workspace-id", "chatgpt-workspace-id", "openai-workspace-id", "x-workspace-id",
 		"organization", "organization-id", "openai-organization", "openai-organization-id", "x-organization-id",
