@@ -74,6 +74,25 @@ HTTPSを用意した環境では `false` のまま使う。
 
 `bridge.json`、`pool.json`、`state/`、`bridge/.venv/` はGit管理外。
 `state_dir` は設定ファイルの置かれたディレクトリを基準に解決する。
+キーの場所だけ別にする場合は `key_file` を指定できる。相対パスは同じく設定ファイル基準。
+
+### KB・論文KBも接続先を共有する
+
+Macからの接続設定はこの `bridge.json` にまとめる。接続先変更時は `origin` をここだけ変更する。
+各コマンドは起動時に設定を読み直す。稼働中の透過ブリッジは手順6で再起動する。
+
+- `pool-rr` は既定でこのリポジトリの `bridge.json` を参照する。
+- `scripts/compact-jsonl.py` も `--origin` 省略時に同じファイルを参照する。
+- `kb` の `~/.config/kb/config.json` は `build_args` に
+  `["--pool-config", "/absolute/path/codex-account-pool/bridge.json", "--workers", "12"]` を設定する。
+  `kb create` と `kb NAME --remote codex ...` の両方に適用される。
+  従来の `--origin`・`--key-file`・`--private-http` は共通設定より優先されるので、共有する場合は取り除く。
+- `paper-kb` の設定は `origin`・`key_file` の代わりに
+  `"pool_config": "/absolute/path/codex-account-pool/bridge.json"` を設定する。`accounts` はそのまま残す。
+
+自作の画像生成などのAPIクライアントも、URLを直書きせず同じJSONの `origin` と
+`key_file`（省略時は `state_dir/client.key`）を読み込む。
+Linux上の `pool.json` の `listen` はサーバー自身の待受設定で、Macの接続先設定とは別。
 
 ## 3. Linuxからブリッジ用キーを取得する
 

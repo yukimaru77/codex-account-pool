@@ -87,6 +87,26 @@ def endpoint(origin, private_http):
     return origin.rstrip("/") + "/_pool/rr/responses"
 
 
+def connection(args):
+    # Explicit legacy origins remain standalone; otherwise share bridge.json.
+    config = {}
+    config_path = None
+    if args.pool_config or not args.origin:
+        config_path = Path(args.pool_config or Path(__file__).resolve().parent.parent / "bridge.json").expanduser().resolve()
+        config = json.loads(config_path.read_text())
+    origin = args.origin or config.get("origin")
+    if not origin:
+        raise ValueError("set origin in --pool-config or pass --origin")
+    url = endpoint(origin, args.private_http or config.get("private_http", False))
+    if args.key_file:
+        key_file = Path(args.key_file).expanduser()
+    else:
+        key_file = Path(config.get("key_file") or Path(config.get("state_dir", "state")) / "client.key").expanduser()
+        if config_path and not key_file.is_absolute():
+            key_file = config_path.parent / key_file
+    return url, key_file
+
+
 def save(item, destination):
     data = json.dumps(item, ensure_ascii=False, indent=2) + "\n"
     if destination == "-":
@@ -107,9 +127,10 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("jsonl", help="prepared input JSONL file, or - for stdin")
     parser.add_argument("--model", required=True, help="upstream model, sent unchanged")
-    parser.add_argument("--origin", required=True, help="pool origin, without /v1")
+    parser.add_argument("--pool-config", help="shared pool config (default: repository bridge.json when --origin is omitted)")
+    parser.add_argument("--origin", help="override pool origin, without /v1")
     parser.add_argument("--private-http", action="store_true")
-    parser.add_argument("--key-file", default="state/client.key", help="pool client key file")
+    parser.add_argument("--key-file", help="override pool client key file")
     parser.add_argument("--output", default="-", help="compaction item JSON file; default stdout")
     parser.add_argument("--instructions", default="Preserve the information in the provided conversation.")
     parser.add_argument("--timeout", type=float, default=180)
@@ -117,13 +138,13 @@ def main():
     try:
         if args.jsonl != "-" and args.output != "-" and Path(args.jsonl).resolve() == Path(args.output).resolve():
             raise ValueError("output must differ from input JSONL")
-        url = endpoint(args.origin, args.private_http)
+        url, key_file = connection(args)
         if args.jsonl == "-":
             body = request_body(sys.stdin.buffer, args.model, args.instructions)
         else:
             with open(args.jsonl, "rb") as source:
                 body = request_body(source, args.model, args.instructions)
-        key = Path(args.key_file).read_text().strip()
+        key = key_file.read_text().strip()
         if not key or any(c.isspace() for c in key):
             raise ValueError("client key must be a nonempty single token")
         request = urllib.request.Request(url, data=body, headers={

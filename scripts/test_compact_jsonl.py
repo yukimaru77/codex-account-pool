@@ -9,6 +9,7 @@ import subprocess
 import sys
 import tempfile
 import threading
+from types import SimpleNamespace
 import unittest
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
@@ -74,9 +75,26 @@ class PreparedJSONLTests(unittest.TestCase):
         self.assertEqual(compact.endpoint("https://pool.example/", False),
                          "https://pool.example/_pool/rr/responses")
 
+    def test_shared_config_changes_take_effect_and_explicit_values_win(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            config = root / "bridge.json"
+            args = SimpleNamespace(pool_config=str(config), origin=None, key_file=None, private_http=False)
+            settings = {"origin": "https://old.example", "state_dir": "pool state"}
+            config.write_text(json.dumps(settings))
+            self.assertEqual(compact.connection(args),
+                             ("https://old.example/_pool/rr/responses", root / "pool state/client.key"))
+            settings.update(origin="http://new.example:18473", private_http=True, key_file="keys/client.key")
+            config.write_text(json.dumps(settings))
+            self.assertEqual(compact.connection(args),
+                             ("http://new.example:18473/_pool/rr/responses", root / "keys/client.key"))
+            args.origin, args.key_file = "https://override.example", str(root / "override.key")
+            self.assertEqual(compact.connection(args),
+                             ("https://override.example/_pool/rr/responses", root / "override.key"))
+
 
 class CommandTests(unittest.TestCase):
-    def run_command(self, response=SUCCESS, status=200, stdin=False, same_output=False, invalid=False):
+    def run_command(self, response=SUCCESS, status=200, stdin=False, same_output=False, invalid=False, shared=False):
         requests = []
 
         class Handler(BaseHTTPRequestHandler):
@@ -115,8 +133,14 @@ class CommandTests(unittest.TestCase):
             thread.start()
             try:
                 command = [sys.executable, str(SCRIPT), "-" if stdin else str(source),
-                           "--model", "test-model", "--origin", f"http://127.0.0.1:{server.server_port}",
-                           "--key-file", str(key), "--output", str(output)]
+                           "--model", "test-model", "--output", str(output)]
+                origin = f"http://127.0.0.1:{server.server_port}"
+                if shared:
+                    config = root / "bridge.json"
+                    config.write_text(json.dumps({"origin": origin, "key_file": "client.key"}))
+                    command += ["--pool-config", str(config)]
+                else:
+                    command += ["--origin", origin, "--key-file", str(key)]
                 result = subprocess.run(command, input=original if stdin else None, capture_output=True, timeout=10)
             finally:
                 server.shutdown()
@@ -143,6 +167,7 @@ class CommandTests(unittest.TestCase):
 
     def test_success_file(self): self.run_command()
     def test_success_stdin(self): self.run_command(stdin=True)
+    def test_shared_config_sends_to_its_origin_with_its_key(self): self.run_command(shared=True)
     def test_input_output_same_file_is_untouched(self): self.run_command(same_output=True)
     def test_invalid_input_does_not_send(self): self.run_command(invalid=True)
     def test_no_blob_does_not_replace_output(self): self.run_command(response=event("response.completed"))

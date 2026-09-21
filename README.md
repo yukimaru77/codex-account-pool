@@ -277,13 +277,15 @@ Tailscaleで接続できるMacから、リポジトリのディレクトリで�
 ```bash
 python3 scripts/compact-jsonl.py prepared.jsonl \
   --model gpt-6-astra \
-  --origin https://pool.example:18473 \
-  --key-file state/client.key \
+  --pool-config bridge.json \
   --output compact.json
 ```
 
 入力ファイルを `-` にすると標準入力から読む。`--output` 省略時は標準出力へ返す。
 `--instructions` で圧縮要求のinstructionsを指定できる。
+接続先・キーの場所・HTTP許可はブリッジや `pool-rr` と同じ `bridge.json` を参照する。
+`--pool-config` 省略時も、`--origin` がなければこのリポジトリの `bridge.json` を読む。
+従来の `--origin`・`--key-file`・`--private-http` による個別指定も使える。
 実アカウントの利用量を消費するが、このコマンドにはMacの透過ブリッジ起動は不要。
 
 出力は `encrypted_content` にblobを含む**圧縮item全体のJSON**。次のResponses要求の

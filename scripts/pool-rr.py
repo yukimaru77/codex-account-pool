@@ -33,7 +33,10 @@ def command(config_path, argv):
     state = Path(config.get("state_dir", "state")).expanduser()
     if not state.is_absolute():
         state = config_path.parent / state
-    key_file = (state / "client.key").resolve()
+    key_file = Path(config.get("key_file", state / "client.key")).expanduser()
+    if not key_file.is_absolute():
+        key_file = config_path.parent / key_file
+    key_file = key_file.resolve()
     key = key_file.read_text().strip()
     if not key or any(c.isspace() for c in key):
         raise ValueError("invalid pool client key")
