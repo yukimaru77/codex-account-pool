@@ -2,6 +2,9 @@
 
 - This is an independent application. Do not patch CPA or change Codex binaries,
   configuration, login state, environment variables, or tool availability.
+- User-requested exception: `pool-rr codex ...` may set invocation-only provider
+  overrides and a child-process client-key environment variable for explicit RR.
+  Never persist these changes to Codex config or change ordinary invocations.
 - Default native endpoints, including images and compaction, use weekly-reset
   fill-first and stop selecting accounts at configurable M percent remaining.
 - Only explicitly configured application-owned endpoints use round-robin and

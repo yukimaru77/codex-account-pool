@@ -176,6 +176,29 @@ Linuxでの実リフレッシュと保存の確認は [検証記録](docs/valida
 
 ## round-robin 専用入口
 
+### Codex をその実行だけ RR にする
+
+```bash
+python3 scripts/pool-rr.py codex exec "このリポジトリを調べて"
+# scripts/pool-rr.py を PATH 上の pool-rr にリンクした場合:
+pool-rr codex exec -m gpt-6-astra "このリポジトリを調べて"
+```
+
+`bridge.json` の origin / state_dir / private_http を使う。
+別設定は `pool-rr --config /path/to/bridge.json codex exec ...`。
+モデル一覧は通常の Codex が保存した `$CODEX_HOME/models_cache.json`
+（既定 `~/.codex/models_cache.json`）を使用するため、先に通常の Codex を一度起動する。
+別の一覧ファイルは bridge.json の `rr_model_catalog` に絶対パスで指定できる。
+Codex の provider を実行時の `-c` だけで RR に指定し、client.key は子プロセスの
+環境変数経由で渡す。通常の Codex / Codex App の設定・ログイン状態は変更しない。
+Codex 側で provider 設定を再上書きする引数とは併用しない。
+
+SSE を使い、ツール後の続きを含め各推論 HTTP 要求でアカウントを巡回する。
+1 exec 全体のアカウント固定ではない。残り M% の予約枠も使えるが、0%、
+無効・クールダウン中のアカウントは対象外。圧縮も RR の Responses 経路を使う。
+WebSocket 接続単位の固定を避けるため、この provider は WebSocket を無効にする。
+生成の自動再送は無効。失敗時はエラーをそのまま返す。
+
 `X-Pool-Account: <auth_index>` ヘッダーで、RR APIの使用アカウントを固定できる。
 値は管理API `GET /_pool/status` にある完全な `auth_index`（メールアドレスや短縮IDではない）。
 指定なしは従来のラウンドロビン。指定ありはそのアカウントだけを使い、通常RRの順番を進めない。
