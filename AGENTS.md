@@ -2,8 +2,9 @@
 
 - This is an independent application. Do not patch CPA or change Codex binaries,
   configuration, login state, environment variables, or tool availability.
-- User-requested exception: `pool-rr codex ...` may set invocation-only provider
-  overrides and a child-process client-key environment variable for explicit RR.
+- User-requested exception: `pool-rr codex exec ...` and `pool-rr kb NAME ... codex ...` may
+  set invocation-only provider overrides and child-process pool environment
+  variables (including the client key) for explicit RR and Remote KB binding.
   Never persist these changes to Codex config or change ordinary invocations.
 - Default native endpoints, including images and compaction, use weekly-reset
   fill-first and stop selecting accounts at configurable M percent remaining.

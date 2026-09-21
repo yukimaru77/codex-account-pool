@@ -182,6 +182,10 @@ Linuxでの実リフレッシュと保存の確認は [検証記録](docs/valida
 python3 scripts/pool-rr.py codex exec "このリポジトリを調べて"
 # scripts/pool-rr.py を PATH 上の pool-rr にリンクした場合:
 pool-rr codex exec -m gpt-6-astra "このリポジトリを調べて"
+# KB を使った exec（kb-repomap の exec / pool-rr 対応版が必要）:
+pool-rr kb paper-demo --remote codex exec -m gpt-6-astra "この論文の要点を説明して"
+# TUI でも利用できる:
+pool-rr kb paper-demo --remote codex
 ```
 
 `bridge.json` の origin / state_dir / private_http を使う。
@@ -192,6 +196,13 @@ pool-rr codex exec -m gpt-6-astra "このリポジトリを調べて"
 Codex の provider を実行時の `-c` だけで RR に指定し、client.key は子プロセスの
 環境変数経由で渡す。通常の Codex / Codex App の設定・ログイン状態は変更しない。
 Codex 側で provider 設定を再上書きする引数とは併用しない。
+
+`kb NAME [KB-options] codex ...` の引数はそのまま渡す。`codex` より前が KB の指定、
+後ろが Codex 本来のサブコマンド・オプションになる。KB が起動する Codex に
+同じ provider 設定を渡し、`--remote` の KB 登録・セッションへの紐付けも
+同じ号池を使う。kb の保存済み接続設定より、この実行の `bridge.json` を優先する。
+これらは子プロセスの環境変数 `KB_CODEX_CONFIG_OVERRIDES`、`KB_POOL_ORIGIN`、
+`KB_POOL_KEY_FILE`、`KB_POOL_PRIVATE_HTTP` で渡し、KB の永続設定も変更しない。
 
 SSE を使い、ツール後の続きを含め各推論 HTTP 要求でアカウントを巡回する。
 1 exec 全体のアカウント固定ではない。残り M% の予約枠も使えるが、0%、
