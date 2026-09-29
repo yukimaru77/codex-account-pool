@@ -1,6 +1,7 @@
 package pool
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -221,17 +222,41 @@ func (s *CodexHomeStore) Names() ([]string, error) {
 	return out, nil
 }
 
+// errTornAuth marks an auth.json that is empty or not valid JSON, which is
+// what a reader sees while Codex truncates and rewrites the file in place.
+var errTornAuth = errors.New("parse auth.json")
+
+// Codex overwrites auth.json in place (not atomically), so a read can catch
+// it half written; such a read is retried a few times after a short wait.
+const (
+	tornAuthRetries = 3
+	tornAuthWait    = 50 * time.Millisecond
+)
+
 // readCodexAuth parses a Codex auth.json into the raw file (for faithful
 // rewrites) and the pool's Credential view. Name and Disabled are left unset.
 func readCodexAuth(path string) (codexAuthFile, Credential, error) {
+	for attempt := 0; ; attempt++ {
+		f, c, err := readCodexAuthOnce(path)
+		if !errors.Is(err, errTornAuth) || attempt >= tornAuthRetries {
+			return f, c, err
+		}
+		time.Sleep(tornAuthWait)
+	}
+}
+
+func readCodexAuthOnce(path string) (codexAuthFile, Credential, error) {
 	var f codexAuthFile
 	var c Credential
 	b, err := os.ReadFile(path)
 	if err != nil {
 		return f, c, err
 	}
+	if len(bytes.TrimSpace(b)) == 0 {
+		return f, c, fmt.Errorf("%w: empty file", errTornAuth)
+	}
 	if err := json.Unmarshal(b, &f); err != nil {
-		return f, c, fmt.Errorf("parse auth.json: %w", err)
+		return f, c, fmt.Errorf("%w: %w", errTornAuth, err)
 	}
 	if f.Tokens == nil || f.Tokens.AccessToken == "" || f.Tokens.RefreshToken == "" {
 		return f, c, fmt.Errorf("auth.json has no ChatGPT tokens (auth_mode %q)", f.AuthMode)

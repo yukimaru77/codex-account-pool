@@ -99,7 +99,7 @@ codex-pool account relink --all --config ~/.codex-pool/pool.json
 ```
 
 無効化はアカウントのディレクトリに `disabled` を置くだけで、`auth.json` は変更しない。
-`auth.json` はCodex本体とプールの両方が期限前に原子的に更新する。
+Codex は auth.json をその場で上書きする（原子的ではない）。号池は読み取り中に壊れたファイルを掴んだ場合、短い待ちで数回再読込する。同時 refresh は Codex 側が更新前にディスクを再読込するため稀で、起きても 401 → 再読込で回復する。
 
 ## 3. アカウントの選び方
 

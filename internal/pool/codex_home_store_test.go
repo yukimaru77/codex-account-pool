@@ -766,3 +766,41 @@ func TestCodexHomeTokenRescansWhenAccountMoves(t *testing.T) {
 		t.Fatalf("Token after removal err = %v, want account not found", err)
 	}
 }
+
+func TestReadCodexAuthRetriesTornWrite(t *testing.T) {
+	_, dir := openTestCodexHome(t)
+	p := writeAuth(t, dir, "torn", "acct-torn", "torn@example.com", time.Now().Add(time.Hour), "refresh-torn")
+	path := filepath.Join(p, "auth.json")
+	full, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, partial := range [][]byte{nil, full[:len(full)/2]} {
+		// Codex truncates and rewrites in place; the reader may catch it mid-write.
+		if err := os.WriteFile(path, partial, 0600); err != nil {
+			t.Fatal(err)
+		}
+		done := make(chan error, 1)
+		go func() {
+			time.Sleep(60 * time.Millisecond)
+			done <- os.WriteFile(path, full, 0600)
+		}()
+		_, c, err := readCodexAuth(path)
+		if werr := <-done; werr != nil {
+			t.Fatal(werr)
+		}
+		if err != nil {
+			t.Fatalf("partial %d bytes: %v", len(partial), err)
+		}
+		if c.AccountID != "acct-torn" {
+			t.Fatalf("account = %q", c.AccountID)
+		}
+	}
+	// A file that stays broken still fails.
+	if err := os.WriteFile(path, []byte("{not json"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := readCodexAuth(path); err == nil || !strings.Contains(err.Error(), "parse auth.json") {
+		t.Fatalf("persistently broken file: %v", err)
+	}
+}

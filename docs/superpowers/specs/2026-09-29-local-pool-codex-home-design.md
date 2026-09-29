@@ -65,7 +65,7 @@ type AccountStore interface {
 - `RefreshRejected`: 既存と同じ。拒否された access_token が今もファイル上の値と一致するときだけ強制 refresh。Codex 側が先に更新していれば再読込だけで済む。
 - `SetDisabled`: マーカーファイルの作成/削除。
 
-refresh の主体について: Codex 本体も号池も auth.json を原子的に書き換える。両者は「期限が迫ったときだけ更新」「更新前に必ず再読込」なので、同時 refresh はレアケースに留まる。起きた場合は 401 → `RefreshRejected` → 再読込で回復する。これは現行の Linux 号池で複数プロセスが同じ CPA ファイルを共有している状況と同等。
+refresh の主体について: Codex は auth.json をその場で上書きする（原子的ではない）。号池は読み取り中に壊れたファイルを掴んだ場合、短い待ちで数回再読込する。同時 refresh は Codex 側が更新前にディスクを再読込するため稀で、起きても 401 → 再読込で回復する。号池自身の書き戻しは原子的（一時ファイル + rename）。これは現行の Linux 号池で複数プロセスが同じ CPA ファイルを共有している状況と同等。
 
 config の切替: `pool.json` に `accounts_dir` があれば `codexHomeStore`、無ければ従来の `state/accounts`（legacy）。Linux 版はそのまま動き、段階移行できる。
 
