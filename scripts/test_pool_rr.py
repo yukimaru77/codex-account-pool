@@ -106,9 +106,9 @@ class PoolRRTest(unittest.TestCase):
                             ["codex", "paper-demo", "--remote", "exec", "legacy syntax"]):
                 for private_http in (False, True):
                     with self.subTest(kb_args=kb_args, private_http=private_http):
-                        origin = "http://pool.example:18473/" if private_http else "http://127.0.0.1:18473/"
+                        origin = "http://127.0.0.1:18473/"
                         settings = {"origin": origin, "state_dir": "pool state",
-                                    "rr_model_catalog": str(catalog), "private_http": private_http}
+                                    "rr_model_catalog": str(catalog)}
                         config.write_text(json.dumps(settings))
                         argv = [str(kb), *kb_args]
                         result = subprocess.run([sys.executable, str(SCRIPT), "--config", str(config), *argv],
@@ -120,7 +120,7 @@ class PoolRRTest(unittest.TestCase):
                         self.assertTrue(data["key_ok"])
                         self.assertEqual(data["origin"], origin.rstrip("/"))
                         self.assertEqual(data["key_file"], str(key_file.resolve()))
-                        self.assertEqual(data["private_http"], "1" if private_http else "0")
+                        self.assertEqual(data["private_http"], "0")
                         overrides = json.loads(data["config"])
                         self.assertEqual(len(overrides), 3)
                         self.assertEqual(overrides[0], 'model_provider="pool_rr"')

@@ -99,8 +99,15 @@ func ParseConfig(b []byte, base string) (Config, error) {
 	if c.QuotaPollSeconds <= 0 || c.QuotaMaxAgeSeconds < c.QuotaPollSeconds {
 		return c, fmt.Errorf("quota age must be at least the positive poll interval")
 	}
-	if _, _, err = net.SplitHostPort(c.Listen); err != nil {
+	host, _, err := net.SplitHostPort(c.Listen)
+	if err != nil {
 		return c, fmt.Errorf("listen: %w", err)
+	}
+	if host != "localhost" {
+		ip := net.ParseIP(host)
+		if ip == nil || !ip.IsLoopback() {
+			return c, fmt.Errorf("listen must be loopback; got %q", host)
+		}
 	}
 	if c.StateDir == "" {
 		return c, fmt.Errorf("state_dir is required")

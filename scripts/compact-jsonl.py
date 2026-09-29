@@ -73,7 +73,7 @@ class NoRedirect(urllib.request.HTTPRedirectHandler):
         return None
 
 
-def endpoint(origin, private_http):
+def endpoint(origin):
     url = urllib.parse.urlsplit(origin)
     if (url.scheme not in ("https", "http") or not url.hostname or url.username is not None
             or url.password is not None or url.path not in ("", "/") or url.query or url.fragment):
@@ -82,8 +82,8 @@ def endpoint(origin, private_http):
         local = ipaddress.ip_address(url.hostname).is_loopback
     except ValueError:
         local = url.hostname == "localhost"
-    if url.scheme == "http" and not local and not private_http:
-        raise ValueError("remote HTTP requires --private-http for a verified private tunnel")
+    if not local:
+        raise ValueError("local pool origin must use localhost or a loopback address")
     return origin.rstrip("/") + "/_pool/rr/responses"
 
 
@@ -97,7 +97,7 @@ def connection(args):
     origin = args.origin or config.get("origin")
     if not origin:
         raise ValueError("set origin in --pool-config or pass --origin")
-    url = endpoint(origin, args.private_http or config.get("private_http", False))
+    url = endpoint(origin)
     if args.key_file:
         key_file = Path(args.key_file).expanduser()
     else:
@@ -129,7 +129,6 @@ def main():
     parser.add_argument("--model", required=True, help="upstream model, sent unchanged")
     parser.add_argument("--pool-config", help="local pool config (default: ~/.codex-pool/kb-pool.json)")
     parser.add_argument("--origin", help="override local pool origin (loopback only)")
-    parser.add_argument("--private-http", action="store_true")
     parser.add_argument("--key-file", help="override pool client key file")
     parser.add_argument("--output", default="-", help="compaction item JSON file; default stdout")
     parser.add_argument("--instructions", default="Preserve the information in the provided conversation.")

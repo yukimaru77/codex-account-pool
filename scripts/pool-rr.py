@@ -36,8 +36,7 @@ def command(config_path, argv):
     spec = importlib.util.spec_from_file_location("compact_jsonl", ROOT / "scripts/compact-jsonl.py")
     compact = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(compact)
-    private_http = config.get("private_http", False)
-    base = compact.endpoint(config["origin"], private_http).removesuffix("/responses")
+    base = compact.endpoint(config["origin"]).removesuffix("/responses")
     state = Path(config.get("state_dir", "state")).expanduser()
     if not state.is_absolute():
         state = config_path.parent / state
@@ -79,7 +78,7 @@ def command(config_path, argv):
         env.update(KB_CODEX_CONFIG_OVERRIDES=json.dumps(overrides),
                    KB_POOL_ORIGIN=config["origin"].rstrip("/"),
                    KB_POOL_KEY_FILE=str(key_file),
-                   KB_POOL_PRIVATE_HTTP="1" if private_http else "0")
+                   KB_POOL_PRIVATE_HTTP="0")
     else:
         args = [argv[0], "exec", *[arg for override in overrides for arg in ("-c", override)], *argv[2:]]
     return args, env

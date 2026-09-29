@@ -67,25 +67,6 @@ class PreparedJSONLTests(unittest.TestCase):
             with self.subTest(data=data), self.assertRaises(ValueError):
                 compact.compaction_item(io.BytesIO(data))
 
-    def test_shared_config_changes_take_effect_and_explicit_values_win(self):
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory).resolve()
-            config = root / "bridge.json"
-            args = SimpleNamespace(pool_config=str(config), origin=None, key_file=None, private_http=False)
-            settings = {"origin": "https://old.example", "state_dir": "pool state"}
-            config.write_text(json.dumps(settings))
-            self.assertEqual(compact.connection(args),
-                             ("https://old.example/_pool/rr/responses", root / "pool state/client.key"))
-            settings.update(origin="http://new.example:18473", private_http=True, key_file="keys/client.key")
-            config.write_text(json.dumps(settings))
-            self.assertEqual(compact.connection(args),
-                             ("http://new.example:18473/_pool/rr/responses", root / "keys/client.key"))
-            args.origin, args.key_file = "https://override.example", str(root / "override.key")
-            self.assertEqual(compact.connection(args),
-                             ("https://override.example/_pool/rr/responses", root / "override.key"))
-
-
-class CommandTests(unittest.TestCase):
     def run_command(self, response=SUCCESS, status=200, stdin=False, same_output=False, invalid=False, shared=False):
         requests = []
 
