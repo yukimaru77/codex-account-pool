@@ -26,10 +26,55 @@ type codexAuthFile struct {
 }
 
 type codexTokens struct {
-	IDToken      string `json:"id_token"`
-	AccessToken  string `json:"access_token"`
-	RefreshToken string `json:"refresh_token"`
-	AccountID    string `json:"account_id"`
+	IDToken      string                     `json:"id_token"`
+	AccessToken  string                     `json:"access_token"`
+	RefreshToken string                     `json:"refresh_token"`
+	AccountID    string                     `json:"account_id"`
+	Extra        map[string]json.RawMessage `json:"-"`
+}
+
+var codexTokensKnownKeys = []string{"id_token", "access_token", "refresh_token", "account_id"}
+
+func (t *codexTokens) UnmarshalJSON(b []byte) error {
+	var m map[string]json.RawMessage
+	if err := json.Unmarshal(b, &m); err != nil {
+		return err
+	}
+	var out codexTokens
+	for k, dst := range map[string]*string{
+		"id_token":      &out.IDToken,
+		"access_token":  &out.AccessToken,
+		"refresh_token": &out.RefreshToken,
+		"account_id":    &out.AccountID,
+	} {
+		raw, ok := m[k]
+		if !ok || string(raw) == "null" {
+			continue
+		}
+		if err := json.Unmarshal(raw, dst); err != nil {
+			return fmt.Errorf("%s: %w", k, err)
+		}
+	}
+	for _, k := range codexTokensKnownKeys {
+		delete(m, k)
+	}
+	if len(m) > 0 {
+		out.Extra = m
+	}
+	*t = out
+	return nil
+}
+
+func (t codexTokens) MarshalJSON() ([]byte, error) {
+	m := make(map[string]any, len(t.Extra)+len(codexTokensKnownKeys))
+	for k, v := range t.Extra {
+		m[k] = v
+	}
+	m["id_token"] = t.IDToken
+	m["access_token"] = t.AccessToken
+	m["refresh_token"] = t.RefreshToken
+	m["account_id"] = t.AccountID
+	return json.Marshal(m)
 }
 
 var codexAuthKnownKeys = []string{"auth_mode", "OPENAI_API_KEY", "tokens", "last_refresh"}
@@ -97,6 +142,7 @@ type CodexHomeStore struct {
 
 	mu     sync.Mutex
 	errors map[string]string
+	names  map[string]string // Credential.ID() -> directory name
 }
 
 var _ AccountStore = (*CodexHomeStore)(nil)
@@ -250,8 +296,13 @@ func (s *CodexHomeStore) List() ([]Credential, error) {
 		seen[c.AccountID] = name
 		out = append(out, c)
 	}
+	ids := make(map[string]string, len(out))
+	for _, c := range out {
+		ids[c.ID()] = c.Name
+	}
 	s.mu.Lock()
 	s.errors = errs
+	s.names = ids
 	s.mu.Unlock()
 	return out, nil
 }
@@ -299,12 +350,141 @@ func (s *CodexHomeStore) SetDisabled(id string, disabled bool) error {
 	return nil
 }
 
-// Token is implemented in a follow-up change.
-func (s *CodexHomeStore) Token(ctx context.Context, id string, force bool) (Credential, error) {
-	return Credential{}, errors.New("not implemented")
+func (s *CodexHomeStore) lockPath(name string) string {
+	return filepath.Join(s.Path(name), ".pool.lock")
 }
 
-// RefreshRejected is implemented in a follow-up change.
+// cachedName returns the directory name remembered for id by the last List.
+func (s *CodexHomeStore) cachedName(id string) (string, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	name, ok := s.names[id]
+	return name, ok
+}
+
+// Token serializes read/refresh/persist across requests and processes
+// (including the Codex CLI's own writes, which it detects by rereading
+// auth.json under the lock) so a rotated refresh token is never reused.
+func (s *CodexHomeStore) Token(ctx context.Context, id string, force bool) (Credential, error) {
+	return s.token(ctx, id, force, "")
+}
+
+// RefreshRejected refreshes only the credential actually rejected upstream.
+// Another request, process or the Codex CLI may already have rotated it.
 func (s *CodexHomeStore) RefreshRejected(ctx context.Context, id, accessToken string) (Credential, error) {
-	return Credential{}, errors.New("not implemented")
+	return s.token(ctx, id, true, accessToken)
+}
+
+// errAccountMoved means the directory no longer holds the account the name
+// cache pointed at; the caller rescans and retries once.
+var errAccountMoved = errors.New("account directory changed")
+
+func (s *CodexHomeStore) token(ctx context.Context, id string, force bool, rejected string) (Credential, error) {
+	if !validID(id) {
+		return Credential{}, fmt.Errorf("invalid account identifier")
+	}
+	name, cached := s.cachedName(id)
+	if !cached {
+		var err error
+		if name, err = s.nameOf(id); err != nil {
+			return Credential{}, err
+		}
+	}
+	c, err := s.tokenIn(ctx, name, id, force, rejected)
+	if cached && errors.Is(err, errAccountMoved) {
+		if name, err = s.nameOf(id); err != nil {
+			return Credential{}, err
+		}
+		c, err = s.tokenIn(ctx, name, id, force, rejected)
+	}
+	return c, err
+}
+
+func (s *CodexHomeStore) tokenIn(ctx context.Context, name, id string, force bool, rejected string) (Credential, error) {
+	var current Credential
+	err := withContextLock(ctx, s.lockPath(name), func() error {
+		file, c, err := readCodexAuth(s.authPath(name))
+		if err != nil {
+			if errors.Is(err, os.ErrNotExist) {
+				return errAccountMoved
+			}
+			return err
+		}
+		if c.ID() != id {
+			return errAccountMoved
+		}
+		c.Name = name
+		if c.Disabled, err = exists(s.markerPath(name)); err != nil {
+			return err
+		}
+		current = c
+		if current.Disabled {
+			return fmt.Errorf("account is disabled")
+		}
+		if rejected != "" && current.AccessToken != rejected {
+			force = false
+		}
+		// Expire comes from the access token; an unparseable token has none
+		// and is treated as expired.
+		exp, err := time.Parse(time.RFC3339, current.Expire)
+		if !force && err == nil && exp.After(time.Now().Add(time.Minute)) {
+			return nil
+		}
+		if s.Refresh == nil {
+			return fmt.Errorf("refresh unavailable")
+		}
+		updated, err := s.Refresh(ctx, current.RefreshToken)
+		if err != nil {
+			return err
+		}
+		if updated == nil || updated.AccessToken == "" {
+			return fmt.Errorf("refresh returned no token")
+		}
+		if updated.AccountID != "" && updated.AccountID != current.AccountID {
+			return fmt.Errorf("refresh changed the account identity")
+		}
+		next := current
+		next.AccessToken = updated.AccessToken
+		if updated.RefreshToken != "" {
+			next.RefreshToken = updated.RefreshToken
+		}
+		if updated.IDToken != "" {
+			claims, err := cpa.ParseJWTToken(updated.IDToken)
+			if err == nil {
+				if claimID := claims.GetAccountID(); claimID != "" && claimID != current.AccountID {
+					return fmt.Errorf("refresh changed the account identity")
+				}
+				if email := claims.GetUserEmail(); email != "" {
+					next.Email = email
+				}
+			}
+			next.IDToken = updated.IDToken
+		}
+		if updated.Email != "" {
+			next.Email = updated.Email
+		}
+		next.Expire = updated.Expire
+		if claims, err := cpa.ParseJWTToken(next.AccessToken); err == nil && claims.Exp > 0 {
+			next.Expire = time.Unix(int64(claims.Exp), 0).UTC().Format(time.RFC3339)
+		}
+		next.LastRefresh = time.Now().UTC().Format(time.RFC3339Nano)
+
+		tokens := *file.Tokens
+		tokens.IDToken = next.IDToken
+		tokens.AccessToken = next.AccessToken
+		tokens.RefreshToken = next.RefreshToken
+		tokens.AccountID = next.AccountID
+		file.Tokens = &tokens
+		file.LastRefresh = next.LastRefresh
+		b, err := json.MarshalIndent(file, "", "  ")
+		if err != nil {
+			return err
+		}
+		if err := AtomicWrite(s.authPath(name), b); err != nil {
+			return err
+		}
+		current = next
+		return nil
+	})
+	return current, err
 }
