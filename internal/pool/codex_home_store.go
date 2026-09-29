@@ -19,6 +19,7 @@ import (
 // program does not know about are kept in Extra so a rewrite never drops them.
 type codexAuthFile struct {
 	AuthMode    string                     `json:"auth_mode"`
+	HasAuthMode bool                       `json:"-"` // auth_mode was present when read
 	APIKey      json.RawMessage            `json:"OPENAI_API_KEY"`
 	Tokens      *codexTokens               `json:"tokens"`
 	LastRefresh string                     `json:"last_refresh,omitempty"`
@@ -86,6 +87,7 @@ func (f *codexAuthFile) UnmarshalJSON(b []byte) error {
 	}
 	var out codexAuthFile
 	if raw, ok := m["auth_mode"]; ok {
+		out.HasAuthMode = true
 		if err := json.Unmarshal(raw, &out.AuthMode); err != nil {
 			return fmt.Errorf("auth_mode: %w", err)
 		}
@@ -118,10 +120,12 @@ func (f codexAuthFile) MarshalJSON() ([]byte, error) {
 	for k, v := range f.Extra {
 		m[k] = v
 	}
-	m["auth_mode"] = f.AuthMode
-	if len(f.APIKey) == 0 {
-		m["OPENAI_API_KEY"] = nil
-	} else {
+	// Keys absent from the original file stay absent, so a rewrite only ever
+	// changes tokens.* and last_refresh.
+	if f.HasAuthMode || f.AuthMode != "" {
+		m["auth_mode"] = f.AuthMode
+	}
+	if len(f.APIKey) > 0 { // RawMessage keeps an explicit null as "null"
 		m["OPENAI_API_KEY"] = f.APIKey
 	}
 	m["tokens"] = f.Tokens
@@ -384,20 +388,22 @@ func (s *CodexHomeStore) token(ctx context.Context, id string, force bool, rejec
 		return Credential{}, fmt.Errorf("invalid account identifier")
 	}
 	name, cached := s.cachedName(id)
-	if !cached {
-		var err error
-		if name, err = s.nameOf(id); err != nil {
-			return Credential{}, err
+	for attempt := 0; ; attempt++ {
+		if !cached {
+			var err error
+			if name, err = s.nameOf(id); err != nil {
+				return Credential{}, err
+			}
 		}
-	}
-	c, err := s.tokenIn(ctx, name, id, force, rejected)
-	if cached && errors.Is(err, errAccountMoved) {
-		if name, err = s.nameOf(id); err != nil {
-			return Credential{}, err
+		c, err := s.tokenIn(ctx, name, id, force, rejected)
+		if !errors.Is(err, errAccountMoved) {
+			return c, err
 		}
-		c, err = s.tokenIn(ctx, name, id, force, rejected)
+		if attempt > 0 {
+			return Credential{}, fmt.Errorf("account not found")
+		}
+		cached = false // rescan the directories and retry once
 	}
-	return c, err
 }
 
 func (s *CodexHomeStore) tokenIn(ctx context.Context, name, id string, force bool, rejected string) (Credential, error) {
@@ -450,13 +456,15 @@ func (s *CodexHomeStore) tokenIn(ctx context.Context, name, id string, force boo
 		}
 		if updated.IDToken != "" {
 			claims, err := cpa.ParseJWTToken(updated.IDToken)
-			if err == nil {
-				if claimID := claims.GetAccountID(); claimID != "" && claimID != current.AccountID {
-					return fmt.Errorf("refresh changed the account identity")
-				}
-				if email := claims.GetUserEmail(); email != "" {
-					next.Email = email
-				}
+			if err != nil {
+				// Codex parses id_token itself; never persist one it cannot read.
+				return fmt.Errorf("refresh returned an unparseable id_token: %w", err)
+			}
+			if claimID := claims.GetAccountID(); claimID != "" && claimID != current.AccountID {
+				return fmt.Errorf("refresh changed the account identity")
+			}
+			if email := claims.GetUserEmail(); email != "" {
+				next.Email = email
 			}
 			next.IDToken = updated.IDToken
 		}
@@ -486,5 +494,9 @@ func (s *CodexHomeStore) tokenIn(ctx context.Context, name, id string, force boo
 		current = next
 		return nil
 	})
+	if errors.Is(err, os.ErrNotExist) {
+		// The directory vanished (e.g. renamed) before the lock could be taken.
+		return Credential{}, errAccountMoved
+	}
 	return current, err
 }

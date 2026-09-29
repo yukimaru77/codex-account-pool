@@ -549,6 +549,11 @@ func TestCodexHomeRefreshRejectsIdentityChange(t *testing.T) {
 			r.AccountID = "acct-mallory"
 			return r
 		},
+		"unparseable id_token": func(t *testing.T) *cpa.CodexTokenData {
+			r := refreshedTokens(t, "acct-alice", "other", time.Now().Add(time.Hour))
+			r.IDToken = "not-a-jwt"
+			return r
+		},
 	} {
 		t.Run(name, func(t *testing.T) {
 			s, dir := openTestCodexHome(t)
@@ -666,5 +671,98 @@ func TestCodexHomeListRejectsAccountIDMismatch(t *testing.T) {
 	}
 	if got := s.Errors()["bob"]; !strings.Contains(got, "account_id") {
 		t.Fatalf("Errors()[bob] = %q, want account_id mismatch", got)
+	}
+}
+
+// rewriteAuth applies edit to the decoded top-level and tokens maps of
+// dir/auth.json and writes it back compactly.
+func rewriteAuth(t *testing.T, dir string, edit func(top, tokens map[string]json.RawMessage)) {
+	t.Helper()
+	path := filepath.Join(dir, "auth.json")
+	top, tokens := readAuthMap(t, path)
+	edit(top, tokens)
+	tb, err := json.Marshal(tokens)
+	if err != nil {
+		t.Fatal(err)
+	}
+	top["tokens"] = tb
+	b, err := json.Marshal(top)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, b, 0600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestCodexHomeTokenRewriteKeepsAbsentKeysAbsent(t *testing.T) {
+	s, dir := openTestCodexHome(t)
+	fresh := refreshedTokens(t, "acct-alice", "new", time.Now().Add(time.Hour))
+	s.Refresh = func(context.Context, string) (*cpa.CodexTokenData, error) { return fresh, nil }
+	p := writeAuth(t, dir, "alice", "acct-alice", "alice@example.com", time.Now().Add(30*time.Second), "rt-a")
+	// Legacy shape: no auth_mode and no OPENAI_API_KEY.
+	rewriteAuth(t, p, func(top, _ map[string]json.RawMessage) {
+		delete(top, "auth_mode")
+		delete(top, "OPENAI_API_KEY")
+	})
+	id := codexHomeID(t, s, "alice")
+	got, err := s.Token(context.Background(), id, false)
+	if err != nil || got.AccessToken != fresh.AccessToken {
+		t.Fatalf("Token = %+v, %v", got, err)
+	}
+	top, _ := readAuthMap(t, filepath.Join(p, "auth.json"))
+	for _, k := range []string{"auth_mode", "OPENAI_API_KEY"} {
+		if raw, ok := top[k]; ok {
+			t.Fatalf("rewrite added absent key %q = %s", k, raw)
+		}
+	}
+	if compactJSON(t, top["custom"]) != `{"x":1}` {
+		t.Fatalf("custom field lost: %s", top["custom"])
+	}
+}
+
+func TestCodexHomeTokenRefreshesOpaqueAccessToken(t *testing.T) {
+	s, dir := openTestCodexHome(t)
+	var calls atomic.Int64
+	fresh := refreshedTokens(t, "acct-alice", "new", time.Now().Add(time.Hour))
+	s.Refresh = func(context.Context, string) (*cpa.CodexTokenData, error) {
+		calls.Add(1)
+		return fresh, nil
+	}
+	p := writeAuth(t, dir, "alice", "acct-alice", "alice@example.com", time.Now().Add(time.Hour), "rt-a")
+	rewriteAuth(t, p, func(_, tokens map[string]json.RawMessage) {
+		tokens["access_token"] = json.RawMessage(`"opaque-access-token"`)
+	})
+	id := codexHomeID(t, s, "alice")
+	got, err := s.Token(context.Background(), id, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if calls.Load() != 1 || got.AccessToken != fresh.AccessToken {
+		t.Fatalf("unparseable access token must be refreshed: calls %d, got %+v", calls.Load(), got)
+	}
+}
+
+func TestCodexHomeTokenRescansWhenAccountMoves(t *testing.T) {
+	s, dir := openTestCodexHome(t)
+	s.Refresh = func(context.Context, string) (*cpa.CodexTokenData, error) {
+		t.Error("refresh called for a valid token")
+		return nil, errors.New("unexpected")
+	}
+	writeAuth(t, dir, "alice", "acct-alice", "alice@example.com", time.Now().Add(time.Hour), "rt-a")
+	id := codexHomeID(t, s, "alice") // caches id -> alice
+	if err := os.Rename(filepath.Join(dir, "alice"), filepath.Join(dir, "alice2")); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.Token(context.Background(), id, false)
+	if err != nil || got.Name != "alice2" {
+		t.Fatalf("Token after move = %+v, %v", got, err)
+	}
+	if err := os.RemoveAll(filepath.Join(dir, "alice2")); err != nil {
+		t.Fatal(err)
+	}
+	_, err = s.Token(context.Background(), id, false)
+	if err == nil || errors.Is(err, errAccountMoved) || !strings.Contains(err.Error(), "not found") {
+		t.Fatalf("Token after removal err = %v, want account not found", err)
 	}
 }
