@@ -92,6 +92,18 @@ codex-pool account list --config ~/.codex-pool/pool.json
 それ以外の `~/.codex` 直下（`config.toml`、sessions、skills など）はsymlinkで共有する。
 `~/.codex` に新しいファイルが増えたら `account relink --all` で張り直す。
 
+ログインし直す（refresh tokenが失効した等）ときは `account login` を使う。
+既存のディレクトリで `codex login` を実行し、結果の account_id と email を表示する。
+以前と別のアカウントでログインした場合は、新しい `auth.json` を残したまま
+エラー（終了コード1）で知らせる。
+
+```bash
+codex-pool account login sub1 --config ~/.codex-pool/pool.json
+```
+
+ラッパー経由の `codex login` / `codex logout` は、どのアカウントに効くか分からないため拒否する。
+`codex-pool account login NAME` を使うか、`CODEX_HOME=<dir> <codex_bin> login` で直接実行する。
+
 ```bash
 codex-pool account disable sub1 --config ~/.codex-pool/pool.json
 codex-pool account enable sub1 --config ~/.codex-pool/pool.json
@@ -105,7 +117,10 @@ Codex は auth.json をその場で上書きする（原子的ではない）。
 
 `codex` を実行するたびに、ラッパーが次の順でアカウントを選ぶ。
 
-1. `--help` や `--version` だけの呼び出しは選択せずそのまま実行する。
+1. `CODEX_HOME` が既に設定されている場合、それが `accounts_dir` 直下のディレクトリなら
+   そのアカウントに固定する（プールで起動したセッション内から入れ子で `codex` を
+   実行しても同じアカウントを使う）。それ以外の場所なら選択せず、環境を変えずに本物のCodexを実行する。
+   `--help` や `--version` だけの呼び出しも選択せずそのまま実行する。
 2. 有効なアカウントの残量を `serve` の `/_pool/status` から取得する。
    `serve` が応答しなければ各アカウントを直接問い合わせる。
 3. 週の残量が `reserve_percent` 以下のものを除き、週リセットが近い順のfill-firstで選ぶ。
@@ -114,7 +129,7 @@ Codex は auth.json をその場で上書きする（原子的ではない）。
    stderrに `codex-pool: account=名前 remaining=残量%` を1行出す。
 
 全アカウントが予備残量以下でも起動は止めず、残量が最も多いものを警告付きで使う。
-固定したい場合は環境変数で指定する。
+固定したい場合は環境変数で指定する（`--account` > `CODEX_POOL_ACCOUNT` > 継承した `CODEX_HOME` の順に優先）。
 
 ```bash
 CODEX_POOL_ACCOUNT=sub1 codex

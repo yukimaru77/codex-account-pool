@@ -14,7 +14,7 @@ import (
 	"codex-account-pool/internal/pool"
 )
 
-const accountUsage = "usage: codex-pool account {add NAME [--from PATH]|list|enable NAME|disable NAME|relink NAME|--all}"
+const accountUsage = "usage: codex-pool account {add NAME [--from PATH]|login NAME|list|enable NAME|disable NAME|relink NAME|--all}"
 
 // runAccount manages the Codex-home account directories under accounts_dir.
 // statusFn supplies quota for list; execLogin runs `codex login` with
@@ -30,6 +30,11 @@ func runAccount(ctx context.Context, cfg pool.Config, store *pool.CodexHomeStore
 			return err
 		}
 		return accountAdd(cfg, store, execLogin, name, from, out)
+	case "login":
+		if len(args) != 2 {
+			return errors.New("usage: codex-pool account login NAME")
+		}
+		return accountLogin(store, execLogin, args[1], out)
 	case "list":
 		if len(args) != 1 {
 			return errors.New(accountUsage)
@@ -143,6 +148,36 @@ func accountAdd(cfg pool.Config, store *pool.CodexHomeStore, execLogin func(stri
 		}
 	}
 	fmt.Fprintf(out, "added %s email=%s account_id=%s\n", name, c.Email, c.AccountID)
+	return nil
+}
+
+// accountLogin re-runs codex login in an existing account directory, e.g.
+// after its refresh token was revoked. Logging in as a different account is
+// an error (exit 1) so it is noticed, but the new auth.json is kept since
+// the user chose it.
+func accountLogin(store *pool.CodexHomeStore, execLogin func(string) error, name string, out io.Writer) error {
+	if !pool.ValidAccountName(name) {
+		return fmt.Errorf("invalid account name %q", name)
+	}
+	dir := store.Path(name)
+	if info, err := os.Stat(dir); err != nil || !info.IsDir() {
+		return fmt.Errorf("account %s not found; create it with: codex-pool account add %s", name, name)
+	}
+	var previous string
+	if c, err := store.Validate(name); err == nil {
+		previous = c.AccountID
+	}
+	if err := execLogin(dir); err != nil {
+		return fmt.Errorf("codex login: %w", err)
+	}
+	c, err := store.Validate(name)
+	if err != nil {
+		return fmt.Errorf("account %s: %w", name, err)
+	}
+	if previous != "" && c.AccountID != previous {
+		return fmt.Errorf("account %s now holds account_id=%s (email=%s) instead of account_id=%s; the new auth.json was kept", name, c.AccountID, c.Email, previous)
+	}
+	fmt.Fprintf(out, "logged in %s email=%s account_id=%s\n", name, c.Email, c.AccountID)
 	return nil
 }
 

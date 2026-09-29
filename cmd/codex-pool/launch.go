@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"slices"
 	"sort"
 	"strings"
@@ -61,6 +62,59 @@ func parseLaunchArgs(args []string) (launchOptions, error) {
 	return o, nil
 }
 
+// codexValueFlags are Codex's top-level flags that take a separate value,
+// so "codex -c k=v login" is still recognised as the login subcommand.
+var codexValueFlags = map[string]bool{
+	"-c": true, "--config": true, "-m": true, "--model": true, "-p": true, "--profile": true,
+	"-i": true, "--image": true, "-s": true, "--sandbox": true, "-a": true, "--ask-for-approval": true,
+	"-C": true, "--cd": true, "--add-dir": true, "--local-provider": true, "--enable": true, "--disable": true,
+}
+
+// codexSubcommand returns the first non-flag Codex argument (before any
+// "--"), which is the subcommand when there is one.
+func codexSubcommand(args []string) string {
+	for i := 0; i < len(args); i++ {
+		a := args[i]
+		switch {
+		case a == "--":
+			return ""
+		case codexValueFlags[a]:
+			i++ // skip the flag's value
+		case !strings.HasPrefix(a, "-"):
+			return a
+		}
+	}
+	return ""
+}
+
+// inheritedAccount reports whether codexHome is a direct child of
+// accountsDir and returns that child's name. Both paths are cleaned and,
+// where they exist, resolved through symlinks.
+func inheritedAccount(codexHome, accountsDir string) (string, bool) {
+	if codexHome == "" {
+		return "", false
+	}
+	resolve := func(p string) string {
+		p, err := filepath.Abs(p)
+		if err != nil {
+			return filepath.Clean(p)
+		}
+		if real, err := filepath.EvalSymlinks(p); err == nil {
+			return real
+		}
+		// A missing account directory still names it; resolve its parent.
+		if parent, err := filepath.EvalSymlinks(filepath.Dir(p)); err == nil {
+			return filepath.Join(parent, filepath.Base(p))
+		}
+		return p
+	}
+	home, dir := resolve(codexHome), resolve(accountsDir)
+	if filepath.Dir(home) != dir {
+		return "", false
+	}
+	return filepath.Base(home), true
+}
+
 // helpOnly reports whether the Codex arguments (up to any "--") are only help
 // or version flags, which need no account.
 func helpOnly(args []string) bool {
@@ -91,6 +145,15 @@ func runLaunch(ctx context.Context, cfg pool.Config, store *pool.CodexHomeStore,
 		return errors.New("codex_bin is not configured; set it in the config")
 	}
 	argv := append([]string{cfg.CodexBin}, o.codexArgs...)
+	if sub := codexSubcommand(o.codexArgs); sub == "login" || sub == "logout" {
+		// Through the wrapper this would log in whichever account was chosen.
+		return errors.New("run login/logout per account: codex-pool account login NAME  (or CODEX_HOME=<dir> <codex_bin> login)")
+	}
+	inherited, fromHome := inheritedAccount(os.Getenv("CODEX_HOME"), store.Dir)
+	if os.Getenv("CODEX_HOME") != "" && !fromHome {
+		// The caller chose its own Codex home outside the pool.
+		return deps.exec(cfg.CodexBin, argv, os.Environ())
+	}
 	if helpOnly(o.codexArgs) {
 		return deps.exec(cfg.CodexBin, argv, os.Environ())
 	}
@@ -112,6 +175,10 @@ func runLaunch(ctx context.Context, cfg pool.Config, store *pool.CodexHomeStore,
 	pinned := o.account
 	if pinned == "" {
 		pinned = os.Getenv("CODEX_POOL_ACCOUNT")
+	}
+	if pinned == "" && fromHome {
+		// A nested codex inside a pooled session keeps that session's account.
+		pinned = inherited
 	}
 	var chosen string
 	var statuses []pool.AccountStatus

@@ -72,6 +72,7 @@ config の切替: `pool.json` に `accounts_dir` があれば `codexHomeStore`�
 ### 3. `codex-pool account` サブコマンド
 
 - `account add NAME [--from PATH]`: ディレクトリ作成 → 共通物 symlink → `--from` があればその auth.json をコピー（初回移行で `~/.codex/auth.json` を取り込む用）、無ければ `CODEX_HOME=<dir> <codex_bin> login` を対話実行。終了後 auth.json を読んで account_id/email を表示。refresh token は使い捨てなので、`--from` の元が `<codex_home>/auth.json` なら元ファイルをアカウント側 auth.json への symlink に置き換える（バックアップは残さない）。それ以外の元ファイルは触らず警告を出す。別の号池に登録済みのアカウントはコピーせず `account add NAME` で別途ログインする。
+- `account login NAME`: 既存ディレクトリで `CODEX_HOME=<dir> <codex_bin> login` を実行し直す（再ログイン用）。以前と別の account_id になった場合は新しい auth.json を残したまま終了コード 1。
 - `account list`: name、email、account_id、disabled、残量（号池が動いていれば `/_pool/status` から、無ければ直接 probe）。
 - `account enable|disable NAME`: マーカー操作。
 - `account relink NAME|--all`: 共通物 symlink を作り直す（`~/.codex` に新しい共有物が増えたとき用）。
@@ -82,11 +83,13 @@ config の切替: `pool.json` に `accounts_dir` があれば `codexHomeStore`�
 
 `codex-pool launch --config pool.json [--account NAME] -- <codex args...>`
 
-1. `--help`/`--version` だけなら選択せず即 exec。
-2. 候補 = `accounts_dir` の有効アカウント。残量は `/_pool/status`（admin.key）から取得。号池が応答しなければ各アカウントを直接 probe（既存 `probe` の関数を再利用、並列 4、タイムアウト 10 秒）。
-3. 選択は scheduler の fill-first と同じ規則（reserve_percent 以下は除外、週次リセットが早い順、同率は名前順）。`--account` または環境変数 `CODEX_POOL_ACCOUNT` で固定できる。
-4. `CODEX_HOME=<dir>` を設定し、`codex_bin` を `syscall.Exec` する。stderr に 1 行 `codex-pool: account=<name> remaining=<n>%` を出す（`--quiet` で抑止）。
-5. 使えるアカウントが無ければ、残量が最も多いものを選んで警告を出す（起動を止めない）。
+1. Codex の最初の非フラグ引数が `login`/`logout` なら拒否し、`account login NAME` を案内する（exec しない）。
+2. 継承した `CODEX_HOME` が `accounts_dir` の直下ならその名前に固定（`--account`・`CODEX_POOL_ACCOUNT` より弱い）。それ以外の場所なら選択もバナーも無しで環境そのままに exec。
+3. `--help`/`--version` だけなら選択せず即 exec。
+4. 候補 = `accounts_dir` の有効アカウント。残量は `/_pool/status`（admin.key）から取得。号池が応答しなければ各アカウントを直接 probe（既存 `probe` の関数を再利用、並列 4、タイムアウト 10 秒）。
+5. 選択は scheduler の fill-first と同じ規則（reserve_percent 以下は除外、週次リセットが早い順、同率は名前順）。`--account` または環境変数 `CODEX_POOL_ACCOUNT` で固定できる。
+6. `CODEX_HOME=<dir>` を設定し、`codex_bin` を `syscall.Exec` する。stderr に 1 行 `codex-pool: account=<name> remaining=<n>%` を出す（`--quiet` で抑止）。
+7. 使えるアカウントが無ければ、残量が最も多いものを選んで警告を出す（起動を止めない）。
 
 ラッパースクリプト `~/.local/bin/codex`（インストーラが置く）:
 

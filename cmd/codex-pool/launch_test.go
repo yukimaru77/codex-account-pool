@@ -25,6 +25,8 @@ type execCall struct {
 // config, store and the directory name -> account ID map.
 func launchEnv(t *testing.T, accounts map[string]bool) (pool.Config, *pool.CodexHomeStore, map[string]string) {
 	t.Helper()
+	// The test itself may run under a pooled Codex session.
+	t.Setenv("CODEX_HOME", "")
 	env := newAccountEnv(t)
 	env.cfg.CodexBin = "/opt/codex/bin/codex"
 	for name, disabled := range accounts {
@@ -78,7 +80,6 @@ func envValues(env []string, key string) []string {
 }
 
 func TestLaunchSetsCodexHomeAndExecs(t *testing.T) {
-	t.Setenv("CODEX_HOME", "/somewhere/else")
 	t.Setenv("CODEX_POOL_ACCOUNT", "")
 	t.Setenv("LAUNCH_TEST_KEEP", "1")
 	cfg, store, ids := launchEnv(t, map[string]bool{"alice": false, "bob": false})
@@ -179,8 +180,8 @@ func TestLaunchPinnedAccount(t *testing.T) {
 }
 
 func TestLaunchHelpBypassesSelection(t *testing.T) {
-	t.Setenv("CODEX_HOME", "/my/own/codex")
 	cfg, store, _ := launchEnv(t, map[string]bool{"alice": false})
+	t.Setenv("CODEX_HOME", "/my/own/codex")
 	status := func(context.Context) ([]pool.AccountStatus, error) {
 		t.Fatal("status must not be called")
 		return nil, nil
@@ -287,5 +288,96 @@ func TestLaunchArgsParsing(t *testing.T) {
 	}
 	if _, err := parseLaunchArgs([]string{"exec", "--", "x"}); err == nil {
 		t.Fatal("positional argument before -- accepted")
+	}
+}
+
+func TestLaunchRefusesLoginLogout(t *testing.T) {
+	t.Setenv("CODEX_POOL_ACCOUNT", "")
+	cfg, store, _ := launchEnv(t, map[string]bool{"alice": false})
+	status := func(context.Context) ([]pool.AccountStatus, error) {
+		t.Fatal("status must not be called")
+		return nil, nil
+	}
+	want := "run login/logout per account: codex-pool account login NAME  (or CODEX_HOME=<dir> <codex_bin> login)"
+	for _, args := range [][]string{{"--", "login"}, {"--", "logout"}, {"--", "-c", "k=v", "login", "--with-api-key"}, {"login"}} {
+		var call execCall
+		var stderr bytes.Buffer
+		err := runLaunch(context.Background(), cfg, store, recordingDeps(status, &call, &stderr), args)
+		if err == nil || err.Error() != want {
+			t.Fatalf("%q: err = %v", args, err)
+		}
+		if call.called {
+			t.Fatalf("%q: exec ran", args)
+		}
+	}
+	// "login" as a later argument (e.g. a prompt) is not the subcommand.
+	var call execCall
+	var stderr bytes.Buffer
+	if err := runLaunch(context.Background(), cfg, store, recordingDeps(noStatus, &call, &stderr), []string{"--", "exec", "login"}); err != nil || !call.called {
+		t.Fatalf("exec login prompt: err=%v called=%v", err, call.called)
+	}
+}
+
+func TestLaunchInheritedCodexHomeUnderAccountsDirPins(t *testing.T) {
+	t.Setenv("CODEX_POOL_ACCOUNT", "")
+	cfg, store, ids := launchEnv(t, map[string]bool{"alice": false, "bob": false})
+	status := func(context.Context) ([]pool.AccountStatus, error) {
+		return []pool.AccountStatus{
+			{ID: ids["alice"], Name: "alice", Quota: weekly(90, 24*time.Hour)},
+			{ID: ids["bob"], Name: "bob", Quota: weekly(20, 72*time.Hour)},
+		}, nil
+	}
+	// A nested codex started from a pooled session keeps its account, even
+	// when CODEX_HOME is spelled with a trailing slash or "..".
+	for _, home := range []string{store.Path("bob"), store.Path("bob") + "/", filepath.Join(store.Path("alice"), "..", "bob")} {
+		t.Setenv("CODEX_HOME", home)
+		var call execCall
+		var stderr bytes.Buffer
+		if err := runLaunch(context.Background(), cfg, store, recordingDeps(status, &call, &stderr), []string{"--", "exec"}); err != nil {
+			t.Fatal(err)
+		}
+		if got := envValues(call.env, "CODEX_HOME"); !slices.Equal(got, []string{store.Path("bob")}) {
+			t.Fatalf("%s: CODEX_HOME = %q", home, got)
+		}
+		if got := stderr.String(); got != "codex-pool: account=bob remaining=20%\n" {
+			t.Fatalf("stderr = %q", got)
+		}
+	}
+	// A disabled or unknown directory under accounts_dir is refused like --account.
+	if err := os.WriteFile(filepath.Join(store.Path("bob"), "disabled"), nil, 0600); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"bob", "nobody"} {
+		t.Setenv("CODEX_HOME", store.Path(name))
+		var call execCall
+		var stderr bytes.Buffer
+		if err := runLaunch(context.Background(), cfg, store, recordingDeps(status, &call, &stderr), nil); err == nil || call.called {
+			t.Fatalf("%s: err=%v called=%v", name, err, call.called)
+		}
+	}
+}
+
+func TestLaunchInheritedCodexHomeElsewherePassesThrough(t *testing.T) {
+	t.Setenv("CODEX_POOL_ACCOUNT", "")
+	cfg, store, _ := launchEnv(t, map[string]bool{"alice": false})
+	own := t.TempDir()
+	t.Setenv("CODEX_HOME", own)
+	status := func(context.Context) ([]pool.AccountStatus, error) {
+		t.Fatal("status must not be called")
+		return nil, nil
+	}
+	var call execCall
+	var stderr bytes.Buffer
+	if err := runLaunch(context.Background(), cfg, store, recordingDeps(status, &call, &stderr), []string{"--", "exec", "hi"}); err != nil {
+		t.Fatal(err)
+	}
+	if !call.called || !slices.Equal(call.args, []string{cfg.CodexBin, "exec", "hi"}) {
+		t.Fatalf("exec = %+v", call)
+	}
+	if got := envValues(call.env, "CODEX_HOME"); !slices.Equal(got, []string{own}) {
+		t.Fatalf("CODEX_HOME = %q", got)
+	}
+	if stderr.Len() != 0 {
+		t.Fatalf("banner printed: %q", stderr.String())
 	}
 }

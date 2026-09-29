@@ -546,3 +546,67 @@ func TestAccountAddRefusesDuplicateAccount(t *testing.T) {
 		t.Fatal("existing account touched", err)
 	}
 }
+
+func TestAccountLoginRunsInExistingDir(t *testing.T) {
+	env := newAccountEnv(t)
+	dir := env.store.Path("work")
+	if err := os.MkdirAll(dir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "auth.json"), codexAuthJSON(t, "acct-work", "old@example.com"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	var loginDir string
+	account := "acct-work"
+	login := func(d string) error {
+		loginDir = d
+		return os.WriteFile(filepath.Join(d, "auth.json"), codexAuthJSON(t, account, "new@example.com"), 0600)
+	}
+	var out bytes.Buffer
+	if err := runAccount(context.Background(), env.cfg, env.store, noStatus, login, []string{"login", "work"}, &out); err != nil {
+		t.Fatal(err)
+	}
+	if loginDir != dir {
+		t.Fatalf("login ran in %q", loginDir)
+	}
+	if out.String() != "logged in work email=new@example.com account_id=acct-work\n" {
+		t.Fatalf("output = %q", out.String())
+	}
+
+	// A login as a different account is reported and fails, but the new
+	// auth.json (the user's choice) is kept.
+	account = "acct-other"
+	out.Reset()
+	err := runAccount(context.Background(), env.cfg, env.store, noStatus, login, []string{"login", "work"}, &out)
+	if err == nil || !strings.Contains(err.Error(), "acct-other") || !strings.Contains(err.Error(), "acct-work") {
+		t.Fatalf("mismatch err = %v", err)
+	}
+	c, err := env.store.Validate("work")
+	if err != nil || c.AccountID != "acct-other" {
+		t.Fatalf("new auth.json not kept: %v %v", c.AccountID, err)
+	}
+
+	// A directory without a readable auth.json can be logged into.
+	fresh := env.store.Path("fresh")
+	if err := os.MkdirAll(fresh, 0700); err != nil {
+		t.Fatal(err)
+	}
+	account = "acct-fresh"
+	out.Reset()
+	if err := runAccount(context.Background(), env.cfg, env.store, noStatus, login, []string{"login", "fresh"}, &out); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestAccountLoginRejectsUnknownName(t *testing.T) {
+	env := newAccountEnv(t)
+	var out bytes.Buffer
+	for _, args := range [][]string{{"login", "missing"}, {"login", "../evil"}, {"login"}, {"login", "a", "b"}} {
+		if err := runAccount(context.Background(), env.cfg, env.store, noStatus, noLogin(t), args, &out); err == nil {
+			t.Fatalf("%q accepted", args)
+		}
+	}
+	if _, err := os.Lstat(env.store.Path("missing")); !os.IsNotExist(err) {
+		t.Fatal("login created a directory", err)
+	}
+}
