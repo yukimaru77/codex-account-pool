@@ -12,6 +12,12 @@ import sys
 ROOT = Path(__file__).resolve().parent.parent
 
 
+def default_config():
+    """The local pool's kb-pool.json when installed, else the repository bridge.json."""
+    local = Path.home() / ".codex-pool/kb-pool.json"
+    return local if local.is_file() else ROOT / "bridge.json"
+
+
 def command(config_path, argv):
     executable = Path(argv[0]).name if argv else None
     is_codex = executable == "codex" and argv[1:2] == ["exec"]
@@ -72,14 +78,15 @@ def command(config_path, argv):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--config", default=str(ROOT / "bridge.json"), help="pool bridge config (default: repository bridge.json)")
+    parser.add_argument("--config", default=None,
+                        help="pool config (default: ~/.codex-pool/kb-pool.json if present, else repository bridge.json)")
     parser.add_argument("command", nargs=argparse.REMAINDER, help="codex exec ... or kb NAME [KB-options] codex ...")
     options = parser.parse_args()
     argv = options.command
     if argv[:1] == ["--"]:
         argv = argv[1:]
     try:
-        args, env = command(options.config, argv)
+        args, env = command(options.config or default_config(), argv)
         os.execvpe(args[0], args, env)
     except (OSError, ValueError, KeyError) as error:
         # Do not include file content or credentials in diagnostics.

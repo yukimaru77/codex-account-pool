@@ -1,3 +1,4 @@
+import importlib.util
 import json
 import os
 from pathlib import Path
@@ -5,6 +6,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 
 SCRIPT = Path(__file__).with_name("pool-rr.py")
@@ -129,6 +131,39 @@ class PoolRRTest(unittest.TestCase):
                         self.assertNotIn("test-client-secret", result.stdout + result.stderr)
                         self.assertEqual(json.loads(config.read_text()), settings)
             self.assertEqual(dict(os.environ), before)
+
+    def test_default_config_prefers_local_kb_pool_json(self):
+        spec = importlib.util.spec_from_file_location("pool_rr", SCRIPT)
+        pool_rr = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(pool_rr)
+        with tempfile.TemporaryDirectory() as directory:
+            home = Path(directory)
+            with mock.patch.dict(os.environ, {"HOME": str(home)}):
+                self.assertEqual(pool_rr.default_config(), pool_rr.ROOT / "bridge.json")
+                local = home / ".codex-pool/kb-pool.json"
+                local.parent.mkdir()
+                local.write_text("{}")
+                self.assertEqual(pool_rr.default_config(), local)
+
+    def test_runs_with_local_kb_pool_json_by_default(self):
+        with tempfile.TemporaryDirectory() as directory:
+            home = Path(directory)
+            state = home / ".codex-pool/state"
+            state.mkdir(parents=True)
+            (state / "client.key").write_text("test-client-secret\n")
+            (home / ".codex-pool/kb-pool.json").write_text(json.dumps(
+                {"origin": "http://127.0.0.1:18999", "key_file": str(state / "client.key")}))
+            (home / ".codex").mkdir()
+            (home / ".codex/models_cache.json").write_text('{"models":[]}')
+            codex = home / "codex"
+            codex.write_text("#!" + sys.executable + "\nimport json,sys\nprint(json.dumps(sys.argv[1:]))\n")
+            codex.chmod(0o755)
+            env = dict(os.environ, HOME=str(home), PATH=str(home) + os.pathsep + os.environ["PATH"])
+            env.pop("CODEX_HOME", None)
+            result = subprocess.run([sys.executable, str(SCRIPT), "codex", "exec", "hi"],
+                                    capture_output=True, text=True, env=env)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertIn('"http://127.0.0.1:18999/_pool/rr"', json.loads(result.stdout)[4])
 
     def test_rejects_commands_outside_supported_invocations(self):
         for argv in ([], ["codex"], ["kb", "create", "demo"], ["other", "codex"], ["codex", "login"],

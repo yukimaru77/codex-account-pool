@@ -112,6 +112,29 @@ class InstallLocalTests(unittest.TestCase):
         self.assertEqual(kb_pool.read_bytes(), custom)
         self.assertIn(str(kb_pool), again.stdout)
 
+    def test_pool_rr_wrapper_uses_local_kb_pool_config(self):
+        self.run_script()
+        wrapper = self.prefix / "pool-rr"
+        self.assertEqual(stat.S_IMODE(wrapper.stat().st_mode), 0o755)
+        text = wrapper.read_text()
+        self.assertTrue(text.startswith("#!/bin/sh\n"))
+        self.assertIn(f'"{REPO}/scripts/pool-rr.py"', text)
+        self.assertIn(f'--config "{self.pool_home}/kb-pool.json"', text)
+        self.assertIn('"$@"', text)
+        self.run_script()
+        self.assertEqual(wrapper.read_text(), text)
+
+    def test_existing_pool_rr_link_is_moved_aside(self):
+        self.prefix.mkdir()
+        (self.prefix / "pool-rr").symlink_to(REPO / "scripts" / "pool-rr.py")
+        self.run_script()
+        backups = sorted(p.name for p in self.prefix.glob("pool-rr.pre-pool-*"))
+        self.assertEqual(len(backups), 1)
+        self.assertTrue((self.prefix / backups[0]).is_symlink())
+        self.assertFalse((self.prefix / "pool-rr").is_symlink())
+        self.run_script()
+        self.assertEqual(sorted(p.name for p in self.prefix.glob("pool-rr.pre-pool-*")), backups)
+
     def test_rerun_is_idempotent_even_with_wrapper_first_on_path(self):
         self.run_script()
         before = (self.pool_home / "pool.json").read_bytes()

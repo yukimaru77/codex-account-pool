@@ -117,7 +117,8 @@ LOG=$STATE/serve.log
 POOL_BIN=$PREFIX/codex-pool
 WRAPPER=$PREFIX/codex
 WRAPPER_REAL=$(canon_dir "$PREFIX")/codex
-for p in "$PREFIX" "$POOL_HOME" "$ACCOUNTS_DIR" "$HOME"; do
+RR_WRAPPER=$PREFIX/pool-rr
+for p in "$PREFIX" "$POOL_HOME" "$ACCOUNTS_DIR" "$HOME" "$REPO"; do
 	check_path "$p"
 done
 
@@ -221,6 +222,27 @@ fi
 mv -f "$tmp_wrapper" "$WRAPPER"
 echo "installed wrapper $WRAPPER"
 
+# 4b. pool-rr wrapper on the local kb-pool.json. Anything else at $RR_WRAPPER
+# (e.g. a link to scripts/pool-rr.py) is kept as pool-rr.pre-pool-<date>.
+tmp_rr=$RR_WRAPPER.tmp.$$
+cat >"$tmp_rr" <<RRWRAPPER
+#!/bin/sh
+# codex-pool pool-rr: round-robin codex exec / kb NAME codex on the local pool.
+exec python3 "$REPO/scripts/pool-rr.py" --config "$KB_POOL" "\$@"
+RRWRAPPER
+chmod 0755 "$tmp_rr"
+if { [ -e "$RR_WRAPPER" ] || [ -L "$RR_WRAPPER" ]; } &&
+	! { [ -f "$RR_WRAPPER" ] && [ ! -L "$RR_WRAPPER" ] && grep -q 'codex-pool pool-rr' "$RR_WRAPPER"; }; then
+	backup=$RR_WRAPPER.pre-pool-$(date +%Y%m%d)
+	if [ -e "$backup" ] || [ -L "$backup" ]; then
+		backup=$backup-$(date +%H%M%S)
+	fi
+	mv "$RR_WRAPPER" "$backup"
+	echo "moved previous $RR_WRAPPER to $backup"
+fi
+mv -f "$tmp_rr" "$RR_WRAPPER"
+echo "installed wrapper $RR_WRAPPER"
+
 # render TEMPLATE OUT: fill @...@ placeholders (paths already checked).
 render() {
 	sed_escape() { printf '%s' "$1" | sed 's/[&|\\]/\\&/g'; }
@@ -281,6 +303,7 @@ Next steps:
   "$POOL_BIN" account add main --from ~/.codex/auth.json --config "$CONFIG"
   "$POOL_BIN" account add NAME --config "$CONFIG"      # log in another account
   "$POOL_BIN" account list --config "$CONFIG"
+  "$RR_WRAPPER" codex exec "..."               # round-robin one exec
 
 For kb-repomap (add to your shell profile):
   export KB_POOL_ORIGIN=$ORIGIN
