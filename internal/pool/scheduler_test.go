@@ -210,3 +210,40 @@ func TestSyncCopiesAccountName(t *testing.T) {
 		t.Fatalf("status %+v", st)
 	}
 }
+
+func TestPickFillFirstPrefersEarliestResetAboveReserve(t *testing.T) {
+	accounts := []AccountStatus{
+		{ID: "id-c", Name: "carol", Quota: quota(80, 72*time.Hour)},
+		{ID: "id-a", Name: "alice", Quota: quota(50, 24*time.Hour)},
+		{ID: "id-b", Name: "bob", Quota: quota(5, time.Hour)},                     // below reserve
+		{ID: "id-d", Name: "dave", Disabled: true, Quota: quota(90, time.Minute)}, // disabled
+		{ID: "id-e", Name: "erin", Error: "refresh failed", Quota: quota(90, time.Minute)},
+		{ID: "id-f", Name: "frank", Quota: quota(50, 24*time.Hour)}, // tie with alice on reset
+	}
+	chosen, ok := PickFillFirst(accounts, testNow, time.Hour, 10)
+	if !ok || chosen != "id-a" {
+		t.Fatalf("chosen = %q %v, want id-a true", chosen, ok)
+	}
+	stale := []AccountStatus{{ID: "id-a", Name: "alice", Quota: quota(50, time.Hour)}}
+	stale[0].Quota.Observed = testNow.Add(-2 * time.Hour)
+	if chosen, ok := PickFillFirst(stale, testNow, time.Hour, 10); ok {
+		t.Fatalf("stale quota chosen: %q", chosen)
+	}
+}
+
+func TestPickFillFirstFallsBackToLeastUsed(t *testing.T) {
+	accounts := []AccountStatus{
+		{ID: "id-a", Name: "alice", Quota: quota(3, time.Hour)},
+		{ID: "id-b", Name: "bob", Quota: quota(8, 2*time.Hour)},
+		{ID: "id-z", Name: "zed", Quota: quota(8, 3*time.Hour)}, // tie with bob, loses on name
+		{ID: "id-d", Name: "dave", Disabled: true, Quota: quota(9, time.Hour)},
+		{ID: "id-e", Name: "erin", Error: "refresh failed"}, // unknown quota never beats a known one
+	}
+	chosen, ok := PickFillFirst(accounts, testNow, time.Hour, 10)
+	if ok || chosen != "id-b" {
+		t.Fatalf("chosen = %q %v, want id-b false", chosen, ok)
+	}
+	if chosen, ok := PickFillFirst([]AccountStatus{{ID: "id-d", Name: "dave", Disabled: true}}, testNow, time.Hour, 10); ok || chosen != "" {
+		t.Fatalf("all disabled: chosen = %q %v", chosen, ok)
+	}
+}

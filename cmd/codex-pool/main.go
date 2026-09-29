@@ -47,7 +47,17 @@ func run(args []string, out io.Writer) error {
 		flags.StringVar(&opts.Listen, "listen", "", "listen address")
 	}
 	var accountArgs []string
-	if command == "account" {
+	if command == "launch" {
+		// Parsed before the generic flags so "--" and the Codex arguments
+		// after it are never consumed here; runLaunch parses the rest.
+		o, err := parseLaunchArgs(args[1:])
+		if err != nil {
+			return err
+		}
+		if o.config != "" {
+			*configPath = o.config
+		}
+	} else if command == "account" {
 		// --config may appear anywhere; the rest belongs to the subcommand.
 		var err error
 		if accountArgs, err = extractConfigFlag(args[1:], configPath); err != nil {
@@ -103,19 +113,7 @@ func run(args []string, out io.Writer) error {
 		if !ok {
 			return fmt.Errorf("account manages Codex account directories; set accounts_dir in the config (codex-pool init --accounts-dir DIR)")
 		}
-		statusFn := func(ctx context.Context) ([]pool.AccountStatus, error) {
-			if admin, err := readKey(cfg.StateDir, "admin.key"); err == nil {
-				if st, err := fetchStatus(ctx, cfg, admin); err == nil {
-					return st, nil
-				}
-			}
-			// No running server: probe the accounts directly.
-			h := pool.NewHandler(cfg, store, transport, "", "")
-			if err := h.Poll(ctx); err != nil {
-				return nil, err
-			}
-			return h.Scheduler.Status(), nil
-		}
+		statusFn := statusOrProbe(cfg, store, transport, 0)
 		execLogin := func(dir string) error {
 			if cfg.CodexBin == "" {
 				return fmt.Errorf("codex_bin is not configured; set it or use --from PATH")
@@ -126,6 +124,14 @@ func run(args []string, out io.Writer) error {
 			return cmd.Run()
 		}
 		return runAccount(ctx, cfg, home, statusFn, execLogin, accountArgs, out)
+	}
+	if command == "launch" {
+		home, ok := store.(*pool.CodexHomeStore)
+		if !ok {
+			return fmt.Errorf("launch needs Codex account directories; set accounts_dir in the config (codex-pool init --accounts-dir DIR)")
+		}
+		deps := launchDeps{status: statusOrProbe(cfg, store, transport, 10*time.Second), exec: execCodex, stderr: os.Stderr}
+		return runLaunch(ctx, cfg, home, deps, args[1:])
 	}
 	switch command {
 	case "import":
@@ -226,6 +232,30 @@ func run(args []string, out io.Writer) error {
 		return err
 	default:
 		return fmt.Errorf("unknown command %q", command)
+	}
+}
+
+// statusOrProbe returns a status source that asks the running pool server
+// and, when none answers, probes the accounts directly (bounded by
+// probeTimeout when it is positive).
+func statusOrProbe(cfg pool.Config, store pool.AccountStore, transport http.RoundTripper, probeTimeout time.Duration) func(context.Context) ([]pool.AccountStatus, error) {
+	return func(ctx context.Context) ([]pool.AccountStatus, error) {
+		if admin, err := readKey(cfg.StateDir, "admin.key"); err == nil {
+			if st, err := fetchStatus(ctx, cfg, admin); err == nil {
+				return st, nil
+			}
+		}
+		// No running server: probe the accounts directly.
+		if probeTimeout > 0 {
+			var cancel context.CancelFunc
+			ctx, cancel = context.WithTimeout(ctx, probeTimeout)
+			defer cancel()
+		}
+		h := pool.NewHandler(cfg, store, transport, "", "")
+		if err := h.Poll(ctx); err != nil {
+			return nil, err
+		}
+		return h.Scheduler.Status(), nil
 	}
 }
 

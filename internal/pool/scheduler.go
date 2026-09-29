@@ -168,6 +168,57 @@ func (s *Scheduler) Select(policy Policy, route, pinned string) (string, error) 
 	return candidates[0].ID, nil
 }
 
+// PickFillFirst applies the fill-first rule to a status snapshot: among
+// accounts that are enabled, error-free and have fresh weekly quota above
+// reserve, it returns the ID of the one with the earliest weekly reset (ties by
+// Name then ID) and ok=true. When none is usable it returns ok=false and the
+// best-effort ID: the enabled account with the lowest Weekly.Used, preferring
+// error-free accounts with observed quota (ties by Name then ID), or "" when
+// every account is disabled.
+func PickFillFirst(accounts []AccountStatus, now time.Time, maxAge time.Duration, reserve float64) (chosen string, ok bool) {
+	byName := func(a, b AccountStatus) bool {
+		if a.Name != b.Name {
+			return a.Name < b.Name
+		}
+		return a.ID < b.ID
+	}
+	var usable, enabled []AccountStatus
+	for _, a := range accounts {
+		if a.Disabled {
+			continue
+		}
+		enabled = append(enabled, a)
+		if a.Error == "" && a.Quota.usable(now, maxAge, reserve) {
+			usable = append(usable, a)
+		}
+	}
+	if len(usable) > 0 {
+		sort.Slice(usable, func(i, j int) bool {
+			a, b := usable[i], usable[j]
+			if !a.Quota.Weekly.Reset.Equal(b.Quota.Weekly.Reset) {
+				return a.Quota.Weekly.Reset.Before(b.Quota.Weekly.Reset)
+			}
+			return byName(a, b)
+		})
+		return usable[0].ID, true
+	}
+	if len(enabled) == 0 {
+		return "", false
+	}
+	unknown := func(a AccountStatus) bool { return a.Error != "" || a.Quota.Observed.IsZero() }
+	sort.Slice(enabled, func(i, j int) bool {
+		a, b := enabled[i], enabled[j]
+		if unknown(a) != unknown(b) {
+			return !unknown(a)
+		}
+		if a.Quota.Weekly.Used != b.Quota.Weekly.Used {
+			return a.Quota.Weekly.Used < b.Quota.Weekly.Used
+		}
+		return byName(a, b)
+	})
+	return enabled[0].ID, false
+}
+
 func (s *Scheduler) Status() []AccountStatus {
 	s.mu.Lock()
 	defer s.mu.Unlock()
