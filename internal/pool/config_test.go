@@ -63,3 +63,68 @@ func TestRoundRobinRouteHeaders(t *testing.T) {
 		})
 	}
 }
+
+func TestLoadConfigExpandsAccountsDir(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	load := func(t *testing.T, body string) (Config, string) {
+		t.Helper()
+		dir := t.TempDir()
+		path := filepath.Join(dir, "pool.json")
+		if err := os.WriteFile(path, []byte(body), 0600); err != nil {
+			t.Fatal(err)
+		}
+		cfg, err := LoadConfig(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return cfg, dir
+	}
+	t.Run("tilde", func(t *testing.T) {
+		cfg, _ := load(t, `{"accounts_dir":"~/x"}`)
+		if cfg.AccountsDir != filepath.Join(home, "x") {
+			t.Fatalf("accounts_dir = %q", cfg.AccountsDir)
+		}
+		if !cfg.UsesCodexHome() {
+			t.Fatal("UsesCodexHome false with accounts_dir set")
+		}
+		if cfg.CodexHome != filepath.Join(home, ".codex") {
+			t.Fatalf("codex_home default = %q", cfg.CodexHome)
+		}
+	})
+	t.Run("relative", func(t *testing.T) {
+		cfg, dir := load(t, `{"accounts_dir":"accounts","codex_home":"~/custom-codex"}`)
+		want, _ := filepath.Abs(filepath.Join(dir, "accounts"))
+		if cfg.AccountsDir != want {
+			t.Fatalf("accounts_dir = %q, want %q", cfg.AccountsDir, want)
+		}
+		if cfg.CodexHome != filepath.Join(home, "custom-codex") {
+			t.Fatalf("codex_home = %q", cfg.CodexHome)
+		}
+	})
+	t.Run("unset", func(t *testing.T) {
+		cfg, _ := load(t, `{}`)
+		if cfg.UsesCodexHome() || cfg.AccountsDir != "" || cfg.CodexHome != "" {
+			t.Fatalf("codex-home fields set without accounts_dir: %+v", cfg)
+		}
+	})
+	t.Run("codex_bin", func(t *testing.T) {
+		for _, ok := range []string{"codex", "/usr/local/bin/codex"} {
+			cfg, _ := load(t, `{"accounts_dir":"a","codex_bin":"`+ok+`"}`)
+			if cfg.CodexBin != ok {
+				t.Fatalf("codex_bin = %q", cfg.CodexBin)
+			}
+		}
+		cfg, _ := load(t, `{"accounts_dir":"a","codex_bin":"~/bin/codex"}`)
+		if cfg.CodexBin != filepath.Join(home, "bin", "codex") {
+			t.Fatalf("codex_bin = %q", cfg.CodexBin)
+		}
+		path := filepath.Join(t.TempDir(), "pool.json")
+		if err := os.WriteFile(path, []byte(`{"accounts_dir":"a","codex_bin":"bin/codex"}`), 0600); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := LoadConfig(path); err == nil {
+			t.Fatal("relative codex_bin path accepted")
+		}
+	})
+}

@@ -22,10 +22,43 @@ type Config struct {
 	ReservePercent     float64          `json:"reserve_percent"`
 	QuotaPollSeconds   int              `json:"quota_poll_seconds"`
 	QuotaMaxAgeSeconds int              `json:"quota_max_age_seconds"`
-	RoundRobin         map[string]Route `json:"round_robin_endpoints"`
+	RoundRobin         map[string]Route `json:"round_robin_endpoints,omitzero"`
 	TLSCert            string           `json:"tls_cert,omitempty"`
 	TLSKey             string           `json:"tls_key,omitempty"`
 	ProxyURL           string           `json:"proxy_url,omitempty"`
+	// AccountsDir, when set, selects the Codex-home store: each subdirectory
+	// is a genuine CODEX_HOME holding auth.json. "~/" is expanded and a
+	// relative path is resolved against the config file's directory.
+	AccountsDir string `json:"accounts_dir,omitempty"`
+	// CodexHome is the user's own Codex home; it defaults to ~/.codex when
+	// AccountsDir is set.
+	CodexHome string `json:"codex_home,omitempty"`
+	// CodexBin is the real codex executable (absolute path or bare name).
+	CodexBin string `json:"codex_bin,omitempty"`
+}
+
+// UsesCodexHome reports whether accounts are read from Codex home directories.
+func (c Config) UsesCodexHome() bool { return c.AccountsDir != "" }
+
+// expandHome replaces a leading "~/" with the user's home directory.
+func expandHome(p string) string {
+	if !strings.HasPrefix(p, "~/") {
+		return p
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return p
+	}
+	return filepath.Join(home, p[2:])
+}
+
+// resolvePath expands "~/" and makes p absolute relative to base.
+func resolvePath(base, p string) (string, error) {
+	p = expandHome(p)
+	if !filepath.IsAbs(p) {
+		p = filepath.Join(base, p)
+	}
+	return filepath.Abs(p)
 }
 
 func DefaultConfig() Config {
@@ -63,12 +96,32 @@ func LoadConfig(path string) (Config, error) {
 	if c.StateDir == "" {
 		return c, fmt.Errorf("state_dir is required")
 	}
+	base := filepath.Dir(path)
 	if !filepath.IsAbs(c.StateDir) {
-		c.StateDir = filepath.Join(filepath.Dir(path), c.StateDir)
+		c.StateDir = filepath.Join(base, c.StateDir)
 	}
 	c.StateDir, err = filepath.Abs(c.StateDir)
 	if err != nil {
 		return c, err
+	}
+	if c.AccountsDir != "" {
+		if c.AccountsDir, err = resolvePath(base, c.AccountsDir); err != nil {
+			return c, err
+		}
+		if c.CodexHome == "" {
+			c.CodexHome = "~/.codex"
+		}
+	}
+	if c.CodexHome != "" {
+		if c.CodexHome, err = resolvePath(base, c.CodexHome); err != nil {
+			return c, err
+		}
+	}
+	if c.CodexBin != "" {
+		c.CodexBin = expandHome(c.CodexBin)
+		if !filepath.IsAbs(c.CodexBin) && strings.ContainsRune(c.CodexBin, filepath.Separator) {
+			return c, fmt.Errorf("codex_bin must be an absolute path or a bare command name")
+		}
 	}
 	for endpoint, route := range c.RoundRobin {
 		if !strings.HasPrefix(endpoint, "/_pool/rr/") || strings.ContainsAny(endpoint, "?#%") || !strings.HasPrefix(route.Path, "/") {
