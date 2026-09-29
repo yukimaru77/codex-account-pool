@@ -59,12 +59,9 @@ check_path() {
 	esac
 }
 
-# realpath_of FILE: canonical path, or FILE itself when no tool resolves it.
-realpath_of() {
-	if command -v realpath >/dev/null 2>&1; then
-		realpath "$1" 2>/dev/null && return
-	fi
-	readlink -f "$1" 2>/dev/null || echo "$1"
+# canon_dir DIR: physical path of DIR, empty when it does not exist.
+canon_dir() {
+	(cd "$1" 2>/dev/null && pwd -P) || true
 }
 
 # is_pool_wrapper FILE: FILE is a script that runs codex-pool launch.
@@ -104,14 +101,15 @@ if [ -e "$CONFIG" ]; then
 	echo "keeping existing $CONFIG"
 else
 	if [ -z "$CODEX_BIN" ]; then
-		wrapper_real=$(realpath_of "$WRAPPER")
+		# $PREFIX/codex is skipped: it is the wrapper or is moved aside below.
+		prefix_real=$(canon_dir "$PREFIX")
 		old_ifs=$IFS
 		IFS=:
 		for dir in $PATH; do
 			IFS=$old_ifs
 			candidate=${dir:-.}/codex
 			[ -f "$candidate" ] && [ -x "$candidate" ] || continue
-			[ "$(realpath_of "$candidate")" = "$wrapper_real" ] && continue
+			[ "$(canon_dir "${dir:-.}")" = "$prefix_real" ] && continue
 			is_pool_wrapper "$candidate" && continue
 			CODEX_BIN=$candidate
 			break

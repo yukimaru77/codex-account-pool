@@ -113,6 +113,16 @@ class InstallLocalTests(unittest.TestCase):
         self.run_script("--codex-bin", str(real), path_dirs=[self.prefix])
         self.assertEqual(self.backups(), backups)
 
+    def test_symlinked_codex_in_prefix_does_not_hide_its_target(self):
+        self.prefix.mkdir()
+        (self.prefix / "codex").symlink_to(self.old_codex)
+        self.run_script(path_dirs=[self.prefix, self.old_codex.parent])
+        self.assertEqual(self.config()["codex_bin"], str(self.old_codex))
+        backups = self.backups()
+        self.assertEqual(len(backups), 1)
+        self.assertTrue((self.prefix / backups[0]).is_symlink())
+        self.assertEqual((self.prefix / "codex").read_text(), self.wrapper_text())
+
     def test_detection_skips_other_pool_wrappers(self):
         other = self.tmp / "otherbin" / "codex"
         write_exe(other, '#!/bin/sh\nexec codex-pool launch --config x -- "$@"\n')
