@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -258,6 +259,70 @@ func readCodexAuth(path string) (codexAuthFile, Credential, error) {
 		c.Expire = time.Unix(int64(claims.Exp), 0).UTC().Format(time.RFC3339)
 	}
 	return f, c, nil
+}
+
+// Validate reads Dir/<name>/auth.json the way List does and returns the
+// credential it holds.
+func (s *CodexHomeStore) Validate(name string) (Credential, error) {
+	return s.read(name)
+}
+
+// ReadCodexAuthFile validates a Codex auth.json anywhere on disk and returns
+// the credential it holds (Name and Disabled unset).
+func ReadCodexAuthFile(path string) (Credential, error) {
+	_, c, err := readCodexAuth(path)
+	return c, err
+}
+
+// SharedExclude lists the Codex home entries that stay per account.
+var SharedExclude = map[string]bool{"auth.json": true, "models_cache.json": true, "log": true, "tmp": true}
+
+// LinkShared symlinks every top-level entry of codexHome (except SharedExclude
+// and names starting with ".write-") into dir, replacing existing symlinks,
+// never touching regular files/dirs already in dir. Returns linked names.
+func LinkShared(dir, codexHome string) ([]string, error) {
+	home, err := filepath.Abs(codexHome)
+	if err != nil {
+		return nil, err
+	}
+	target, err := filepath.Abs(dir)
+	if err != nil {
+		return nil, err
+	}
+	entries, err := os.ReadDir(home)
+	if err != nil {
+		return nil, err
+	}
+	linked := []string{}
+	for _, e := range entries {
+		name := e.Name()
+		if SharedExclude[name] || strings.HasPrefix(name, ".write-") {
+			continue
+		}
+		src := filepath.Join(home, name)
+		// Never link an entry that contains the account directory itself
+		// (accounts_dir inside codex_home), which would make a loop.
+		if rel, err := filepath.Rel(src, target); err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+			continue
+		}
+		dst := filepath.Join(target, name)
+		info, err := os.Lstat(dst)
+		switch {
+		case err == nil && info.Mode()&os.ModeSymlink == 0:
+			continue // the account's own file or directory
+		case err == nil:
+			if err := os.Remove(dst); err != nil {
+				return linked, err
+			}
+		case !errors.Is(err, os.ErrNotExist):
+			return linked, err
+		}
+		if err := os.Symlink(src, dst); err != nil {
+			return linked, err
+		}
+		linked = append(linked, name)
+	}
+	return linked, nil
 }
 
 func (s *CodexHomeStore) read(name string) (Credential, error) {

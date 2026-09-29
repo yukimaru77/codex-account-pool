@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"strings"
@@ -33,7 +34,7 @@ func main() {
 
 func run(args []string, out io.Writer) error {
 	if len(args) == 0 {
-		return fmt.Errorf("usage: codex-pool {init|login|import|serve|status|probe|enable|disable} --config pool.json [files or account ID]")
+		return fmt.Errorf("usage: codex-pool {init|account|launch|serve|status|probe|enable|disable|login|import} --config pool.json [files or account ID]")
 	}
 	command := args[0]
 	flags := flag.NewFlagSet(command, flag.ContinueOnError)
@@ -45,7 +46,14 @@ func run(args []string, out io.Writer) error {
 		flags.StringVar(&opts.CodexBin, "codex-bin", "", "real codex executable")
 		flags.StringVar(&opts.Listen, "listen", "", "listen address")
 	}
-	if err := flags.Parse(args[1:]); err != nil {
+	var accountArgs []string
+	if command == "account" {
+		// --config may appear anywhere; the rest belongs to the subcommand.
+		var err error
+		if accountArgs, err = extractConfigFlag(args[1:], configPath); err != nil {
+			return err
+		}
+	} else if err := flags.Parse(args[1:]); err != nil {
 		return err
 	}
 	if command == "init" {
@@ -90,6 +98,35 @@ func run(args []string, out io.Writer) error {
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	if command == "account" {
+		home, ok := store.(*pool.CodexHomeStore)
+		if !ok {
+			return fmt.Errorf("account manages Codex account directories; set accounts_dir in the config (codex-pool init --accounts-dir DIR)")
+		}
+		statusFn := func(ctx context.Context) ([]pool.AccountStatus, error) {
+			if admin, err := readKey(cfg.StateDir, "admin.key"); err == nil {
+				if st, err := fetchStatus(ctx, cfg, admin); err == nil {
+					return st, nil
+				}
+			}
+			// No running server: probe the accounts directly.
+			h := pool.NewHandler(cfg, store, transport, "", "")
+			if err := h.Poll(ctx); err != nil {
+				return nil, err
+			}
+			return h.Scheduler.Status(), nil
+		}
+		execLogin := func(dir string) error {
+			if cfg.CodexBin == "" {
+				return fmt.Errorf("codex_bin is not configured; set it or use --from PATH")
+			}
+			cmd := exec.CommandContext(ctx, cfg.CodexBin, "login")
+			cmd.Env = append(os.Environ(), "CODEX_HOME="+dir)
+			cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
+			return cmd.Run()
+		}
+		return runAccount(ctx, cfg, home, statusFn, execLogin, accountArgs, out)
+	}
 	switch command {
 	case "import":
 		if len(flags.Args()) == 0 {
@@ -151,30 +188,11 @@ func run(args []string, out io.Writer) error {
 		}
 		return json.NewEncoder(out).Encode(h.Scheduler.Status())
 	case "status":
-		scheme := "http"
-		if cfg.TLSCert != "" {
-			scheme = "https"
-		}
-		host := cfg.Listen
-		if address, port, err := net.SplitHostPort(host); err == nil && (address == "" || address == "0.0.0.0" || address == "::") {
-			host = net.JoinHostPort("127.0.0.1", port)
-		}
-		r, err := http.NewRequestWithContext(ctx, "GET", scheme+"://"+host+"/_pool/status", nil)
+		st, err := fetchStatus(ctx, cfg, admin)
 		if err != nil {
 			return err
 		}
-		r.Header.Set("Authorization", "Bearer "+admin)
-		statusClient := &http.Client{Timeout: 5 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
-		resp, err := statusClient.Do(r)
-		if err != nil {
-			return fmt.Errorf("server unavailable; use probe to fetch quota directly")
-		}
-		defer func() { _ = resp.Body.Close() }()
-		if resp.StatusCode != 200 {
-			return fmt.Errorf("status HTTP %d", resp.StatusCode)
-		}
-		_, err = io.Copy(out, resp.Body)
-		return err
+		return json.NewEncoder(out).Encode(st)
 	case "serve":
 		lock, err := os.OpenFile(filepath.Join(cfg.StateDir, "server.lock"), os.O_CREATE|os.O_RDWR, 0600)
 		if err != nil {
@@ -209,6 +227,59 @@ func run(args []string, out io.Writer) error {
 	default:
 		return fmt.Errorf("unknown command %q", command)
 	}
+}
+
+// fetchStatus asks the running pool server for its account status.
+func fetchStatus(ctx context.Context, cfg pool.Config, admin string) ([]pool.AccountStatus, error) {
+	scheme := "http"
+	if cfg.TLSCert != "" {
+		scheme = "https"
+	}
+	host := cfg.Listen
+	if address, port, err := net.SplitHostPort(host); err == nil && (address == "" || address == "0.0.0.0" || address == "::") {
+		host = net.JoinHostPort("127.0.0.1", port)
+	}
+	r, err := http.NewRequestWithContext(ctx, "GET", scheme+"://"+host+"/_pool/status", nil)
+	if err != nil {
+		return nil, err
+	}
+	r.Header.Set("Authorization", "Bearer "+admin)
+	statusClient := &http.Client{Timeout: 5 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+	resp, err := statusClient.Do(r)
+	if err != nil {
+		return nil, fmt.Errorf("server unavailable; use probe to fetch quota directly")
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != 200 {
+		return nil, fmt.Errorf("status HTTP %d", resp.StatusCode)
+	}
+	var st []pool.AccountStatus
+	if err := json.NewDecoder(resp.Body).Decode(&st); err != nil {
+		return nil, fmt.Errorf("decode status: %w", err)
+	}
+	return st, nil
+}
+
+// extractConfigFlag removes --config PATH (or -config, --config=PATH) from
+// args wherever it appears and returns the remaining arguments.
+func extractConfigFlag(args []string, configPath *string) ([]string, error) {
+	var rest []string
+	for i := 0; i < len(args); i++ {
+		a := args[i]
+		switch {
+		case a == "--config" || a == "-config":
+			if i+1 >= len(args) {
+				return nil, fmt.Errorf("flag needs an argument: %s", a)
+			}
+			*configPath = args[i+1]
+			i++
+		case strings.HasPrefix(a, "--config=") || strings.HasPrefix(a, "-config="):
+			*configPath = a[strings.IndexByte(a, '=')+1:]
+		default:
+			rest = append(rest, a)
+		}
+	}
+	return rest, nil
 }
 
 // accountID resolves a Codex-home directory name to its account ID; any other
