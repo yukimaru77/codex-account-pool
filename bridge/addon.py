@@ -1,6 +1,8 @@
 """Route captured chatgpt.com requests; leave body and WebSocket bytes opaque."""
 
+import base64
 import ipaddress
+import json
 import logging
 from pathlib import Path
 from urllib.parse import urlsplit
@@ -28,6 +30,29 @@ def parse_origin(value: str, private_http: bool = False):
     if origin.scheme == "http" and not loopback and not private_http:
         raise ValueError("non-loopback HTTP requires a verified private tunnel and --private-http")
     return origin, port
+
+
+# Codex >= 0.156 fetches this at startup and refuses to run unless the
+# response lists its own ChatGPT account id (workspace routing discovery).
+# The pool answers with the selected pooled account, so rewrite the id.
+ACCOUNTS_CHECK_PATHS = ("/backend-api/wham/accounts/check", "/backend-api/api/codex/accounts/check")
+
+
+def client_account_id(request: http.Request):
+    """Return the caller's ChatGPT account id from its header or its own JWT."""
+    for name in request.headers:
+        if name.lower().replace("_", "-") == "chatgpt-account-id" and request.headers[name].strip():
+            return request.headers[name].strip()
+    token = request.headers.get("Authorization", "")
+    parts = token.split(".")
+    if not token.startswith("Bearer ") or len(parts) != 3:
+        return ""
+    try:
+        payload = parts[1]
+        claims = json.loads(base64.urlsafe_b64decode(payload + "=" * (-len(payload) % 4)))
+        return str(claims.get("https://api.openai.com/auth", {}).get("chatgpt_account_id", "") or "")
+    except (ValueError, AttributeError):
+        return ""
 
 
 class Bridge:
@@ -67,6 +92,10 @@ class Bridge:
         logging.info("pool bridge: %s %s request", self.mode, r.method)
         if self.mode == "observe":
             return
+        if r.method == "GET" and r.path.split("?", 1)[0] in ACCOUNTS_CHECK_PATHS:
+            account_id = client_account_id(r)
+            if account_id:
+                flow.metadata["pool_client_account_id"] = account_id
         for name in list(r.headers):
             n = name.lower().replace("_", "-")
             if n in {"authorization", "cookie", "cookie2", "actor", "openai-actor", "x-openai-actor", "chatgpt-account-id", "openai-organization", "openai-project", "x-api-key", "api-key"}:
@@ -78,10 +107,38 @@ class Bridge:
         r.host_header = self.origin.netloc
 
     def responseheaders(self, flow: http.HTTPFlow):
-        flow.response.stream = True
+        rewrite = (flow.metadata.get("pool_bridge_mode") == "pool"
+                   and flow.metadata.get("pool_client_account_id")
+                   and flow.response.status_code == 200)
+        flow.response.stream = not rewrite
         if flow.metadata.get("pool_bridge_mode") == "pool":
             flow.response.headers.pop("set-cookie", None)
             flow.response.headers.pop("set-cookie2", None)
+
+    def response(self, flow: http.HTTPFlow):
+        account_id = flow.metadata.get("pool_client_account_id")
+        if flow.response.stream or not account_id or flow.metadata.get("pool_bridge_mode") != "pool":
+            return
+        try:
+            body = json.loads(flow.response.get_text(strict=False) or "")
+            accounts = body["accounts"]
+        except (ValueError, KeyError, TypeError):
+            logging.warning("pool bridge: accounts/check response not rewritten (unexpected body)")
+            return
+        matching = [a for a in accounts if isinstance(a, dict) and a.get("id") == account_id]
+        if matching:
+            body["accounts"] = matching[:1]
+        elif accounts and isinstance(accounts[0], dict):
+            entry = dict(accounts[0])
+            user = str(entry.get("account_user_id") or "")
+            if "__" in user:
+                entry["account_user_id"] = user.rsplit("__", 1)[0] + "__" + account_id
+            entry["id"] = account_id
+            body["accounts"] = [entry]
+        else:
+            return
+        flow.response.text = json.dumps(body)
+        logging.info("pool bridge: accounts/check rewritten to client account")
 
     def tcp_message(self, flow: tcp.TCPFlow):
         # websocket=false makes HTTP upgrades raw TCP. Discard only retained

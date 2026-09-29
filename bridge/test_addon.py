@@ -194,6 +194,65 @@ class BridgeTests(unittest.TestCase):
                                 self.assertEqual(actual, expected)
                                 self.assertEqual(config.read_bytes(), before)
 
+    def accounts_check_flow(self, mode="pool", account_id="client-account", jwt=False):
+        bridge = self.bridge(mode)
+        flow = tflow.tflow()
+        headers = {"Authorization": "Bearer original", "Cookie": "secret"}
+        if jwt:
+            import base64
+            payload = base64.urlsafe_b64encode(json.dumps(
+                {"https://api.openai.com/auth": {"chatgpt_account_id": account_id}}).encode()).rstrip(b"=").decode()
+            headers["Authorization"] = "Bearer h." + payload + ".s"
+        elif account_id:
+            headers["Chatgpt-Account-Id"] = account_id
+        flow.request = http.Request.make("GET", "https://chatgpt.com/backend-api/wham/accounts/check", b"", headers)
+        bridge.requestheaders(flow)
+        return bridge, flow
+
+    def pooled_accounts(self):
+        return {"accounts": [
+            {"id": "pool-a", "account_user_id": "user-x__pool-a", "structure": "personal",
+             "workspace_backend_origin": "NO_CONSTRAINT", "account_routing_override": "NO_CONSTRAINT"},
+            {"id": "pool-b", "account_user_id": "user-x__pool-b", "structure": "workspace",
+             "workspace_backend_origin": "NO_CONSTRAINT", "account_routing_override": "NO_CONSTRAINT"}]}
+
+    def test_accounts_check_response_is_rewritten_to_client_account(self):
+        for jwt in (False, True):
+            with self.subTest(jwt=jwt):
+                bridge, flow = self.accounts_check_flow(jwt=jwt)
+                self.assertEqual(flow.request.headers["Authorization"], "Bearer dedicated-client-key")
+                self.assertNotIn("Chatgpt-Account-Id", flow.request.headers)
+                flow.response = http.Response.make(200, json.dumps(self.pooled_accounts()).encode(),
+                                                   {"Content-Type": "application/json", "Set-Cookie": "x"})
+                bridge.responseheaders(flow)
+                self.assertFalse(flow.response.stream)
+                bridge.response(flow)
+                body = json.loads(flow.response.text)
+                self.assertEqual([a["id"] for a in body["accounts"]], ["client-account"])
+                self.assertEqual(body["accounts"][0]["account_user_id"], "user-x__client-account")
+                self.assertEqual(body["accounts"][0]["workspace_backend_origin"], "NO_CONSTRAINT")
+                self.assertNotIn("Set-Cookie", flow.response.headers)
+
+    def test_accounts_check_keeps_matching_client_account_entry(self):
+        bridge, flow = self.accounts_check_flow(account_id="pool-b")
+        flow.response = http.Response.make(200, json.dumps(self.pooled_accounts()).encode(),
+                                           {"Content-Type": "application/json"})
+        bridge.responseheaders(flow)
+        bridge.response(flow)
+        self.assertEqual(json.loads(flow.response.text)["accounts"], [self.pooled_accounts()["accounts"][1]])
+
+    def test_accounts_check_leaves_errors_observe_mode_and_unknown_client_untouched(self):
+        for mode, status, account_id in (("pool", 401, "client-account"), ("observe", 200, "client-account"),
+                                         ("pool", 200, "")):
+            with self.subTest(mode=mode, status=status, account_id=account_id):
+                bridge, flow = self.accounts_check_flow(mode, account_id)
+                raw = json.dumps(self.pooled_accounts()).encode()
+                flow.response = http.Response.make(status, raw, {"Content-Type": "application/json"})
+                bridge.responseheaders(flow)
+                self.assertTrue(flow.response.stream)
+                bridge.response(flow)
+                self.assertEqual(flow.response.raw_content, raw)
+
 
 if __name__ == "__main__":
     unittest.main()
