@@ -280,7 +280,7 @@ func accountList(ctx context.Context, store *pool.CodexHomeStore, statusFn func(
 		}
 	}
 	w := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(w, "NAME\tEMAIL\tREMAINING%\tRESET\tSTATE")
+	fmt.Fprintln(w, "NAME\tAUTH_INDEX\tEMAIL\tREMAINING%\tRESET\tSTATE")
 	for _, c := range list {
 		remaining, reset := "-", "-"
 		state := "ok"
@@ -301,7 +301,7 @@ func accountList(ctx context.Context, store *pool.CodexHomeStore, statusFn func(
 		if email == "" {
 			email = "-"
 		}
-		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n", c.Name, email, remaining, reset, state)
+		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\n", c.Name, c.ID(), email, remaining, reset, state)
 	}
 	names := make([]string, 0, len(errs))
 	for name := range errs {
@@ -309,7 +309,7 @@ func accountList(ctx context.Context, store *pool.CodexHomeStore, statusFn func(
 	}
 	sort.Strings(names)
 	for _, name := range names {
-		fmt.Fprintf(w, "%s\t-\t-\t-\terror: %s\n", name, errs[name])
+		fmt.Fprintf(w, "%s\t-\t-\t-\t-\terror: %s\n", name, errs[name])
 	}
 	if err := w.Flush(); err != nil {
 		return err

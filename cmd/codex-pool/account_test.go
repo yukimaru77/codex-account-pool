@@ -290,13 +290,18 @@ func TestAccountListShowsQuotaAndErrors(t *testing.T) {
 	if len(lines) != 4 {
 		t.Fatalf("output = %q", out.String())
 	}
-	if f := strings.Fields(lines[0]); strings.Join(f, " ") != "NAME EMAIL REMAINING% RESET STATE" {
+	if f := strings.Fields(lines[0]); strings.Join(f, " ") != "NAME AUTH_INDEX EMAIL REMAINING% RESET STATE" {
 		t.Fatalf("header = %q", lines[0])
 	}
 	want := map[string][]string{
-		"alpha":  {"alpha@example.com", "75%", "ok"},
-		"beta":   {"beta@example.com", "10%", "disabled"},
-		"broken": {"-", "-", "error:"},
+		"alpha":  {ids["alpha"], "alpha@example.com", "75%", "ok"},
+		"beta":   {ids["beta"], "beta@example.com", "10%", "disabled"},
+		"broken": {"-", "-", "-", "error:"},
+	}
+	for _, id := range []string{ids["alpha"], ids["beta"]} {
+		if len(id) != 32 {
+			t.Fatalf("auth_index %q is not the full id", id)
+		}
 	}
 	for _, line := range lines[1:] {
 		f := strings.Fields(line)
@@ -304,7 +309,7 @@ func TestAccountListShowsQuotaAndErrors(t *testing.T) {
 		if !ok {
 			t.Fatalf("unexpected row %q", line)
 		}
-		if f[1] != w[0] || f[2] != w[1] || !strings.Contains(line, w[2]) {
+		if f[1] != w[0] || f[2] != w[1] || f[3] != w[2] || !strings.Contains(line, w[3]) {
 			t.Fatalf("row %q, want %v", line, w)
 		}
 		delete(want, f[0])
