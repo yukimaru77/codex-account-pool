@@ -71,7 +71,7 @@ config の切替: `pool.json` に `accounts_dir` があれば `codexHomeStore`�
 
 ### 3. `codex-pool account` サブコマンド
 
-- `account add NAME [--from PATH]`: ディレクトリ作成 → 共通物 symlink → `--from` があればその auth.json をコピー（初回移行で `~/.codex/auth.json` を取り込む用）、無ければ `CODEX_HOME=<dir> <codex_bin> login` を対話実行。終了後 auth.json を読んで account_id/email を表示。
+- `account add NAME [--from PATH]`: ディレクトリ作成 → 共通物 symlink → `--from` があればその auth.json をコピー（初回移行で `~/.codex/auth.json` を取り込む用）、無ければ `CODEX_HOME=<dir> <codex_bin> login` を対話実行。終了後 auth.json を読んで account_id/email を表示。refresh token は使い捨てなので、`--from` の元が `<codex_home>/auth.json` なら元ファイルをアカウント側 auth.json への symlink に置き換える（バックアップは残さない）。それ以外の元ファイルは触らず警告を出す。別の号池に登録済みのアカウントはコピーせず `account add NAME` で別途ログインする。
 - `account list`: name、email、account_id、disabled、残量（号池が動いていれば `/_pool/status` から、無ければ直接 probe）。
 - `account enable|disable NAME`: マーカー操作。
 - `account relink NAME|--all`: 共通物 symlink を作り直す（`~/.codex` に新しい共有物が増えたとき用）。

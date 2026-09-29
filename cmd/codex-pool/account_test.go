@@ -447,3 +447,62 @@ func TestAccountAddFromRejectsInvalidSource(t *testing.T) {
 		t.Fatal("directory created for invalid source", err)
 	}
 }
+
+func TestAccountAddFromCodexHomeReplacesSourceWithSymlink(t *testing.T) {
+	env := newAccountEnv(t)
+	src := filepath.Join(env.home, "auth.json")
+	want, err := os.ReadFile(src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out bytes.Buffer
+	if err := runAccount(context.Background(), env.cfg, env.store, noStatus, noLogin(t), []string{"add", "main", "--from", src}, &out); err != nil {
+		t.Fatal(err)
+	}
+	accountAuth := filepath.Join(env.store.Path("main"), "auth.json")
+	target, err := os.Readlink(src)
+	if err != nil {
+		t.Fatalf("source not replaced by a symlink: %v", err)
+	}
+	if target != accountAuth {
+		t.Fatalf("source -> %s, want %s", target, accountAuth)
+	}
+	if info, err := os.Lstat(accountAuth); err != nil || info.Mode()&os.ModeSymlink != 0 {
+		t.Fatalf("account auth.json must be a regular file: %v %v", info, err)
+	}
+	if got, err := os.ReadFile(src); err != nil || !bytes.Equal(got, want) {
+		t.Fatalf("read through symlink = %q, %v", got, err)
+	}
+	if strings.Contains(out.String(), "warning") {
+		t.Fatalf("unexpected warning: %q", out.String())
+	}
+	entries, _ := os.ReadDir(env.home)
+	for _, e := range entries {
+		if strings.HasPrefix(e.Name(), "auth.json") && e.Name() != "auth.json" {
+			t.Fatalf("backup copy left behind: %s", e.Name())
+		}
+	}
+}
+
+func TestAccountAddFromOtherPathWarns(t *testing.T) {
+	env := newAccountEnv(t)
+	src := filepath.Join(t.TempDir(), "auth.json")
+	b := codexAuthJSON(t, "acct-other", "other@example.com")
+	if err := os.WriteFile(src, b, 0600); err != nil {
+		t.Fatal(err)
+	}
+	var out bytes.Buffer
+	if err := runAccount(context.Background(), env.cfg, env.store, noStatus, noLogin(t), []string{"add", "other", "--from", src}, &out); err != nil {
+		t.Fatal(err)
+	}
+	if info, err := os.Lstat(src); err != nil || info.Mode()&os.ModeSymlink != 0 {
+		t.Fatalf("other source must be left alone: %v %v", info, err)
+	}
+	if got, _ := os.ReadFile(src); !bytes.Equal(got, b) {
+		t.Fatal("other source modified")
+	}
+	want := "warning: " + src + " still holds the same refresh token; stop using it or it will exhaust this account"
+	if !strings.Contains(out.String(), want) {
+		t.Fatalf("output = %q, want warning %q", out.String(), want)
+	}
+}

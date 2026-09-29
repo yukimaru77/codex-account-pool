@@ -130,8 +130,61 @@ func accountAdd(cfg pool.Config, store *pool.CodexHomeStore, execLogin func(stri
 	if err != nil {
 		return fmt.Errorf("account %s: %w", name, err)
 	}
+	if from != "" {
+		if err := retireSource(cfg, from, authPath, out); err != nil {
+			return err
+		}
+	}
 	fmt.Fprintf(out, "added %s email=%s account_id=%s\n", name, c.Email, c.AccountID)
 	return nil
+}
+
+// retireSource keeps a copied credential from splitting its refresh-token
+// chain: refresh tokens are single use, so two files holding the same one
+// exhaust each other. When the source is the user's own Codex home auth.json
+// it becomes a symlink to the account's file (no backup copy is kept, since
+// a backup would be one more holder of the chain); any other source is left
+// alone with a warning.
+func retireSource(cfg pool.Config, from, authPath string, out io.Writer) error {
+	if !sameCodexHomeAuth(cfg.CodexHome, from) {
+		fmt.Fprintf(out, "warning: %s still holds the same refresh token; stop using it or it will exhaust this account\n", from)
+		return nil
+	}
+	target, err := filepath.Abs(authPath)
+	if err != nil {
+		return err
+	}
+	// Swap in the symlink with a rename so Codex never sees auth.json missing.
+	tmp := filepath.Join(filepath.Dir(from), ".auth.json.pool-link")
+	_ = os.Remove(tmp)
+	if err := os.Symlink(target, tmp); err != nil {
+		return fmt.Errorf("link %s to the account: %w", from, err)
+	}
+	if err := os.Rename(tmp, from); err != nil {
+		_ = os.Remove(tmp)
+		return fmt.Errorf("link %s to the account: %w", from, err)
+	}
+	fmt.Fprintf(out, "linked %s -> %s\n", from, target)
+	return nil
+}
+
+// sameCodexHomeAuth reports whether path names <codexHome>/auth.json,
+// comparing the resolved parent directories.
+func sameCodexHomeAuth(codexHome, path string) bool {
+	if codexHome == "" || filepath.Base(path) != "auth.json" {
+		return false
+	}
+	resolve := func(dir string) (string, bool) {
+		abs, err := filepath.Abs(dir)
+		if err != nil {
+			return "", false
+		}
+		real, err := filepath.EvalSymlinks(abs)
+		return real, err == nil
+	}
+	home, ok1 := resolve(codexHome)
+	parent, ok2 := resolve(filepath.Dir(path))
+	return ok1 && ok2 && home == parent
 }
 
 func credentialByName(store *pool.CodexHomeStore, name string) (pool.Credential, error) {

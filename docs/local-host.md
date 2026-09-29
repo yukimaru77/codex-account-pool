@@ -73,6 +73,17 @@ codex-pool account add sub1 --config ~/.codex-pool/pool.json
 codex-pool account list --config ~/.codex-pool/pool.json
 ```
 
+`--from` はファイルをコピーする。refresh token は使い捨てのため、
+同じ token を持つファイルが2つあると、後から refresh した側が恒久的に使えなくなる。
+そこで `--from ~/.codex/auth.json`（`codex_home` の `auth.json`）を取り込むと、
+元の `~/.codex/auth.json` をアカウント側 `auth.json` へのsymlinkに置き換える。
+バックアップは残さない（残すと同じ token の持ち主がもう1つ増える）。
+それ以外のパスから取り込んだ場合は元ファイルに触れず、
+`warning: <PATH> still holds the same refresh token; ...` を表示する。
+元ファイルは以後使わないこと。
+別の号池（Linuxの号池など）に登録済みのアカウントは、コピーせず
+`account add NAME`（`--from` なし）で別途ログインすること。
+
 `--from` の無い `account add` は、そのアカウント用の `CODEX_HOME` で
 `codex login` を対話実行する。名前は英数字・`-`・`_`。
 各アカウントの `auth.json` と `models_cache.json` は個別、
@@ -135,7 +146,10 @@ launchctl bootout gui/$(id -u)/com.local.codex-account-pool-bridge
 `bridge.json` とブリッジ用の専用CAは不要になる。
 CAを撤去する場合は [READMEのブリッジの節](../README.md#mac-の透過ブリッジ) の手順に従う。
 Linuxのプールは別プロセスとして残る。ローカルのプールと同じアカウントを
-両方に登録してもよいが、残量は別々に数えるため予備残量の判断は各自で行う。
+両方で使う場合は、Linux側の認証ファイルをコピーせず、
+ローカルで `account add NAME`（`--from` なし）により別途ログインすること
+（コピーすると refresh token を奪い合い、片方が使えなくなる）。
+残量は別々に数えるため予備残量の判断は各自で行う。
 
 ## 6. トラブルシューティング
 
