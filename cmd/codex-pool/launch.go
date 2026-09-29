@@ -207,8 +207,11 @@ func firstEnabled(creds map[string]pool.Credential) string {
 // remainingOf formats the weekly quota left for name, or "?" when unknown.
 func remainingOf(statuses []pool.AccountStatus, name string) string {
 	for _, s := range statuses {
-		if s.Name == name && s.Error == "" && !s.Quota.Observed.IsZero() && s.Quota.Weekly.Seconds == 604800 {
-			return fmt.Sprintf("%.0f", 100-s.Quota.Weekly.Used)
+		if s.Name != name || s.Error != "" {
+			continue
+		}
+		if left, ok := s.Quota.WeeklyRemaining(); ok {
+			return fmt.Sprintf("%.0f", left)
 		}
 	}
 	return "?"

@@ -128,6 +128,15 @@ func QuotaFromHeaders(h http.Header, now time.Time) (Quota, bool) {
 	return q, q.Weekly.Seconds != 0
 }
 
+// WeeklyRemaining returns the weekly quota left in percent, clamped to
+// [0,100]; ok is false when no 7-day window has been observed.
+func (q Quota) WeeklyRemaining() (float64, bool) {
+	if q.Weekly.Seconds != 604800 || q.Observed.IsZero() {
+		return 0, false
+	}
+	return min(max(100-q.Weekly.Used, 0), 100), true
+}
+
 func (q Quota) usable(now time.Time, maxAge time.Duration, reserve float64) bool {
 	if q.Weekly.Seconds != 604800 || !q.Allowed || q.Observed.IsZero() || now.Sub(q.Observed) > maxAge || !q.Weekly.Reset.After(now) || 100-q.Weekly.Used <= reserve {
 		return false

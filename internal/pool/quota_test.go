@@ -56,3 +56,25 @@ func TestModelSpecificQuotaCannotReplaceMainWeeklyBudget(t *testing.T) {
 		t.Fatal("main header family confused with additional limit metadata")
 	}
 }
+
+func TestQuotaWeeklyRemaining(t *testing.T) {
+	now := time.Now()
+	cases := []struct {
+		q    Quota
+		want float64
+		ok   bool
+	}{
+		{Quota{Weekly: Window{Used: 25, Seconds: 604800}, Observed: now}, 75, true},
+		{Quota{Weekly: Window{Used: 130, Seconds: 604800}, Observed: now}, 0, true},
+		{Quota{Weekly: Window{Used: -5, Seconds: 604800}, Observed: now}, 100, true},
+		{Quota{Weekly: Window{Used: 25, Seconds: 604800}}, 0, false},
+		{Quota{Weekly: Window{Used: 25, Seconds: 18000}, Observed: now}, 0, false},
+		{Quota{}, 0, false},
+	}
+	for i, c := range cases {
+		got, ok := c.q.WeeklyRemaining()
+		if got != c.want || ok != c.ok {
+			t.Fatalf("case %d: got %v %v, want %v %v", i, got, ok, c.want, c.ok)
+		}
+	}
+}

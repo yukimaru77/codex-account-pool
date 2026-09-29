@@ -250,8 +250,8 @@ func accountList(ctx context.Context, store *pool.CodexHomeStore, statusFn func(
 		remaining, reset := "-", "-"
 		state := "ok"
 		s, ok := statuses[c.ID()]
-		if ok && s.Quota.Weekly.Seconds != 0 && !s.Quota.Observed.IsZero() {
-			remaining = fmt.Sprintf("%.0f%%", 100-s.Quota.Weekly.Used)
+		if left, known := s.Quota.WeeklyRemaining(); ok && known {
+			remaining = fmt.Sprintf("%.0f%%", left)
 			if !s.Quota.Weekly.Reset.IsZero() {
 				reset = s.Quota.Weekly.Reset.Local().Format("2006-01-02 15:04")
 			}
