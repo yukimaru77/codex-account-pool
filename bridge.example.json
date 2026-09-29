@@ -1,7 +1,0 @@
-{
-  "state_dir": "state",
-  "origin": "https://pool.example:18473",
-  "private_http": false,
-  "exclude_codex_app": false,
-  "rr_standalone_web_search": false
-}

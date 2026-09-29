@@ -13,9 +13,11 @@ ROOT = Path(__file__).resolve().parent.parent
 
 
 def default_config():
-    """The local pool's kb-pool.json when installed, else the repository bridge.json."""
+    """The local pool's kb-pool.json when installed."""
     local = Path.home() / ".codex-pool/kb-pool.json"
-    return local if local.is_file() else ROOT / "bridge.json"
+    if local.is_file():
+        return local
+    raise ValueError("local pool config not found; run scripts/install-local.sh")
 
 
 def command(config_path, argv):
@@ -28,7 +30,7 @@ def command(config_path, argv):
         ))
     )
     if not is_codex and not is_kb:
-        raise ValueError("usage: pool-rr [--config bridge.json] {codex exec | kb NAME [KB-options] codex} ...")
+        raise ValueError("usage: pool-rr [--config local pool config] {codex exec | kb NAME [KB-options] codex} ...")
     config_path = Path(config_path).expanduser().resolve()
     config = json.loads(config_path.read_text())
     spec = importlib.util.spec_from_file_location("compact_jsonl", ROOT / "scripts/compact-jsonl.py")
@@ -67,7 +69,7 @@ def command(config_path, argv):
     table = "{ " + ", ".join(k + " = " + json.dumps(v) for k, v in provider.items()) + " }"
     catalog = Path(config.get("rr_model_catalog", str(Path(os.environ.get("CODEX_HOME", Path.home() / ".codex")) / "models_cache.json"))).expanduser().resolve()
     if not catalog.is_file():
-        raise ValueError("model catalog missing: run normal codex once or set rr_model_catalog in bridge.json")
+        raise ValueError("model catalog missing: run normal codex once or set rr_model_catalog in local pool config")
     overrides = ['model_provider="pool_rr"', "model_providers.pool_rr=" + table,
                  "model_catalog_json=" + json.dumps(str(catalog))]
     env = dict(os.environ, CODEX_POOL_RR_KEY=key)
@@ -86,7 +88,7 @@ def command(config_path, argv):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--config", default=None,
-                        help="pool config (default: ~/.codex-pool/kb-pool.json if present, else repository bridge.json)")
+                        help="pool config (default: ~/.codex-pool/kb-pool.json if present, else repository local pool config)")
     parser.add_argument("command", nargs=argparse.REMAINDER, help="codex exec ... or kb NAME [KB-options] codex ...")
     options = parser.parse_args()
     argv = options.command

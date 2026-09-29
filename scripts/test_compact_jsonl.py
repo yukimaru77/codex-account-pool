@@ -67,14 +67,6 @@ class PreparedJSONLTests(unittest.TestCase):
             with self.subTest(data=data), self.assertRaises(ValueError):
                 compact.compaction_item(io.BytesIO(data))
 
-    def test_remote_http_uses_existing_private_tunnel_opt_in(self):
-        with self.assertRaises(ValueError):
-            compact.endpoint("http://192.0.2.10:18473", False)
-        self.assertEqual(compact.endpoint("http://192.0.2.10:18473", True),
-                         "http://192.0.2.10:18473/_pool/rr/responses")
-        self.assertEqual(compact.endpoint("https://pool.example/", False),
-                         "https://pool.example/_pool/rr/responses")
-
     def test_shared_config_changes_take_effect_and_explicit_values_win(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory).resolve()

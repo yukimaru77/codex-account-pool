@@ -88,11 +88,11 @@ def endpoint(origin, private_http):
 
 
 def connection(args):
-    # Explicit legacy origins remain standalone; otherwise share bridge.json.
+    # Use the installed local pool config unless explicitly overridden.
     config = {}
     config_path = None
     if args.pool_config or not args.origin:
-        config_path = Path(args.pool_config or Path(__file__).resolve().parent.parent / "bridge.json").expanduser().resolve()
+        config_path = Path(args.pool_config or Path.home() / ".codex-pool/kb-pool.json").expanduser().resolve()
         config = json.loads(config_path.read_text())
     origin = args.origin or config.get("origin")
     if not origin:
@@ -127,8 +127,8 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("jsonl", help="prepared input JSONL file, or - for stdin")
     parser.add_argument("--model", required=True, help="upstream model, sent unchanged")
-    parser.add_argument("--pool-config", help="shared pool config (default: repository bridge.json when --origin is omitted)")
-    parser.add_argument("--origin", help="override pool origin, without /v1")
+    parser.add_argument("--pool-config", help="local pool config (default: ~/.codex-pool/kb-pool.json)")
+    parser.add_argument("--origin", help="override local pool origin (loopback only)")
     parser.add_argument("--private-http", action="store_true")
     parser.add_argument("--key-file", help="override pool client key file")
     parser.add_argument("--output", default="-", help="compaction item JSON file; default stdout")

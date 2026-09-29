@@ -178,7 +178,7 @@ pool-rr kb paper-demo --remote codex        # TUI
 `pool-rr` は `kb-pool.json` の接続先と `client.key` を使い、その実行の Codex だけ
 provider を `/_pool/rr` に向ける。各推論要求ごとにアカウントを巡回する。
 `scripts/pool-rr.py` を直接実行した場合も、`~/.codex-pool/kb-pool.json` があれば
-それを既定の設定として使う（無ければ従来どおりリポジトリの `bridge.json`）。
+それを既定の設定として使う。インストール前に設定が無ければエラーになります。
 
 `pool-rr` はPATH上の `codex` を実行するため、ラッパー経由になる。
 このためラッパーの `codex-pool: account=名前 remaining=残量%` は表示されるが、
@@ -255,28 +255,7 @@ model・quality・size・background・n などは号池が固定する（`gpt-im
 `--remote` はCodex専用で、Claude Codeでは使えない。
 号池はOpenAI向けの通信にしかKBを注入できず、Anthropicの通信には介在できないため。
 
-## 5. ブリッジからの移行
-
-ローカルのプールで `codex exec 'hi'` と `kb` の利用を確認してから、
-mitmdumpのブリッジを止める。
-
-```bash
-launchctl bootout gui/$(id -u)/com.local.codex-account-pool-bridge
-```
-
-`~/.zshrc` などの `KB_POOL_ORIGIN` をループバックへ書き換える。
-`~/.config/kb/config.json` の `build_args` の `--pool-config` を
-`~/.codex-pool/kb-pool.json` に変える。`bridge.json` はコピーしない。
-`pool-rr` はインストーラが置いたものを使う（以前のsymlinkは退避される）。
-`bridge.json` とブリッジ用の専用CAは不要になる。
-CAを撤去する場合は [READMEのブリッジの節](../README.md#mac-の透過ブリッジ) の手順に従う。
-Linuxのプールは別プロセスとして残る。ローカルのプールと同じアカウントを
-両方で使う場合は、Linux側の認証ファイルをコピーせず、
-ローカルで `account add NAME`（`--from` なし）により別途ログインすること
-（コピーすると refresh token を奪い合い、片方が使えなくなる）。
-残量は別々に数えるため予備残量の判断は各自で行う。
-
-## 6. トラブルシューティング
+## 5. トラブルシューティング
 
 ```bash
 codex-pool account list --config ~/.codex-pool/pool.json
@@ -304,7 +283,7 @@ systemctl --user stop codex-pool
 systemctl --user start codex-pool
 ```
 
-## Codex Appで失われるもの
+## Codex Appについて
 
 Codex App（Codex.app・ChatGPT.app）はラッパーを通らず、providerも変更できない。
 このため、Appは自分でログインした1アカウントだけで動き、

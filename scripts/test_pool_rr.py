@@ -74,29 +74,6 @@ class PoolRRTest(unittest.TestCase):
             self.assertEqual(os.environ.get("CODEX_POOL_RR_KEY"), before)
             self.assertEqual(json.loads(config.read_text())["origin"], "http://127.0.0.1:18473")
 
-    def test_bridge_uses_config_relative_key_and_state_paths(self):
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory).resolve()
-            ca = root / "state/ca"
-            ca.mkdir(parents=True)
-            (ca / "mitmproxy-ca-cert.pem").write_text("fixture")
-            config = root / "bridge.json"
-            config.write_text(json.dumps({"origin": "http://pool.example:18473", "key_file": "keys/client.key",
-                                          "private_http": True, "exclude_codex_app": True}))
-            fake_bridge = root / "mitmdump"
-            fake_bridge.write_text("#!" + sys.executable + "\nimport json,sys\nprint(json.dumps(sys.argv[1:]))\n")
-            fake_bridge.chmod(0o755)
-            result = subprocess.run([sys.executable, str(SCRIPT.parent.parent / "bridge/run.py"),
-                                     "pool", "--config", str(config), "--mitmdump", str(fake_bridge)],
-                                    capture_output=True, text=True)
-            self.assertEqual(result.returncode, 0, result.stderr)
-            args = json.loads(result.stdout)
-            self.assertIn("pool_key_file=" + str(root / "keys/client.key"), args)
-            self.assertIn("confdir=" + str(ca), args)
-            self.assertIn("pool_origin=http://pool.example:18473", args)
-            self.assertIn("pool_private_http=true", args)
-            self.assertIn("local:codex,Codex,!/Codex.app/,!/ChatGPT.app/", args)
-
     def test_kb_preserves_invocation_and_sets_one_pool_for_binding_and_inference(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -165,7 +142,7 @@ class PoolRRTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             home = Path(directory)
             with mock.patch.dict(os.environ, {"HOME": str(home)}):
-                self.assertEqual(pool_rr.default_config(), pool_rr.ROOT / "bridge.json")
+                self.assertRaises(ValueError, pool_rr.default_config)
                 local = home / ".codex-pool/kb-pool.json"
                 local.parent.mkdir()
                 local.write_text("{}")

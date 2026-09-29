@@ -2,10 +2,9 @@
 
 - This is an independent application. Do not patch CPA or change Codex binaries,
   configuration, login state, environment variables, or tool availability.
-- User-requested exception: `pool-rr codex exec ...` and `pool-rr kb NAME ... codex ...` may
-  set invocation-only provider overrides and child-process pool environment
-  variables (including the client key) for explicit RR and Remote KB binding.
-  Never persist these changes to Codex config or change ordinary invocations.
+- `pool-rr codex exec ...` and `pool-rr kb NAME ... codex ...` may set invocation-only
+  provider overrides and child-process pool environment variables for local RR and KB binding.
+  Never persist these changes to Codex config.
 - Default native endpoints, including images and compaction, use weekly-reset
   fill-first and stop selecting accounts at configurable M percent remaining.
 - Only explicitly configured application-owned endpoints use round-robin and
@@ -13,9 +12,6 @@
 - Ordinary requests pass through with fill-first regardless of path, method,
   query, or payload schema. Only application-owned endpoints are exceptions.
   Do not add a native route allowlist or reject unfamiliar request fields.
-- Codex 0.156.1 compatibility: the Mac bridge leaves only the read-only
-  `GET /backend-api/wham/accounts/check` discovery on the original login so
-  Codex can match its selected workspace. Inference and usage still use the pool.
 - Relay original bytes. Never regenerate request/response JSON, normalize tools,
   map models, filter unknown fields/events, or replay generation automatically.
 - User-requested exception: the two /_pool/rr/images endpoints accept only prompt
@@ -24,12 +20,12 @@
   Codex source when upgrading; do not silently follow changed upstream paths.
 - Keep content inspection small and read-only. Any added inspection must directly
   support account selection, continuity, or usage observation.
-- Explicit Remote KB sessions are the scoped exception: register immutable KB
-  items, inherit the binding for children, and insert them into inference input
-  before conversation/compaction history. Exclude them from compaction requests.
+- Explicit local KB sessions may register immutable KB items, inherit the binding for children,
+  and insert them into inference input before conversation/compaction history. Exclude them from compaction requests.
   Preserve other JSON fields and response bytes; keep unregistered relay intact.
 - Reuse the narrow CPA OAuth/quota code under internal/cpa. Preserve MIT notice,
   pin the source commit, and document adaptations in third_party/cpa.
 - Never log credentials or arbitrary OAuth error response bodies.
 - Run gofmt, go test -race ./..., and go build ./cmd/codex-pool after changes.
+- This repository is local-only: do not add remote pool, Tailscale, Linux-host, or transparent-bridge deployment paths.
 - Unit tests use mock upstreams. Report real Mac/OpenAI integration separately.
