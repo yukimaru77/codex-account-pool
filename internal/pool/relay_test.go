@@ -106,12 +106,12 @@ func TestEveryRequestUsesCurrentSelectedCredentialsAfterRefresh(t *testing.T) {
 	h, accounts := relayFixture(t, 90, 80)
 	for i := range accounts {
 		accounts[i].IDToken = "id-token-" + accounts[i].AccountID
-		if _, err := h.Store.Login(accounts[i]); err != nil {
+		if _, err := h.Store.(*Store).Login(accounts[i]); err != nil {
 			t.Fatal(err)
 		}
 	}
 	refreshCalls := 0
-	otherStore, err := OpenStore(h.Store.Dir, func(_ context.Context, refreshToken string) (*cpa.CodexTokenData, error) {
+	otherStore, err := OpenStore(h.Store.(*Store).Dir, func(_ context.Context, refreshToken string) (*cpa.CodexTokenData, error) {
 		refreshCalls++
 		if refreshToken != accounts[0].RefreshToken {
 			t.Fatal("refresh used another account's credential")

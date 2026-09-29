@@ -18,6 +18,7 @@ var ErrPinnedUnavailable = errors.New("the resource's account is unavailable for
 type AccountStatus struct {
 	ID        string               `json:"auth_index"`
 	Email     string               `json:"email"`
+	Name      string               `json:"name,omitempty"`
 	Disabled  bool                 `json:"disabled"`
 	Quota     Quota                `json:"quota"`
 	Error     string               `json:"error,omitempty"`
@@ -52,6 +53,7 @@ func (s *Scheduler) Sync(accounts []Credential) {
 		a := s.accounts[id]
 		a.ID = id
 		a.Email = c.Email
+		a.Name = c.Name
 		a.Disabled = c.Disabled
 		s.accounts[id] = a
 		seen[id] = true

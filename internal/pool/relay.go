@@ -56,7 +56,7 @@ type Record struct {
 
 type Handler struct {
 	Config    Config
-	Store     *Store
+	Store     AccountStore
 	Scheduler *Scheduler
 	Transport http.RoundTripper
 	ClientKey string
@@ -66,7 +66,7 @@ type Handler struct {
 	RemoteKB  *remoteKBStore
 }
 
-func NewHandler(cfg Config, store *Store, transport http.RoundTripper, clientKey, adminKey string) *Handler {
+func NewHandler(cfg Config, store AccountStore, transport http.RoundTripper, clientKey, adminKey string) *Handler {
 	h := &Handler{Config: cfg, Store: store, Scheduler: NewScheduler(cfg), Transport: transport, ClientKey: clientKey, AdminKey: adminKey}
 	h.Publish = h.writeRecord
 	h.RemoteKB = newRemoteKBStore(cfg.StateDir)

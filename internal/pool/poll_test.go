@@ -42,7 +42,7 @@ func TestQuota401RefreshesAndPersistsBeforeRetryingSameAccount(t *testing.T) {
 						if quotaCalls > 2 || r.Header.Get("Authorization") != "Bearer rotated-access" {
 							t.Fatal("quota retried too often or used stale token")
 						}
-						stored, err := h.Store.read(account.ID())
+						stored, err := h.Store.(*Store).read(account.ID())
 						if err != nil || stored.RefreshToken != "rotated-refresh" {
 							t.Fatal("rotated token was not persisted before retry")
 						}
@@ -55,7 +55,7 @@ func TestQuota401RefreshesAndPersistsBeforeRetryingSameAccount(t *testing.T) {
 				return &http.Response{StatusCode: status, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(body))}, nil
 			})
 			auth := cpa.NewCodexAuth(&http.Client{Transport: h.Transport})
-			h.Store.Refresh = func(ctx context.Context, token string) (*cpa.CodexTokenData, error) {
+			h.Store.(*Store).Refresh = func(ctx context.Context, token string) (*cpa.CodexTokenData, error) {
 				return auth.RefreshTokensWithRetry(ctx, token, 3)
 			}
 			q, err := h.FetchQuota(context.Background(), account.ID())
@@ -73,10 +73,10 @@ func TestPollRefreshFailurePreservesCredentialAndExcludesAccount(t *testing.T) {
 	h, accounts := relayFixture(t, 90, 90)
 	failed := accounts[0]
 	failed.Expire = time.Now().Add(-time.Hour).Format(time.RFC3339)
-	if _, err := h.Store.Login(failed); err != nil {
+	if _, err := h.Store.(*Store).Login(failed); err != nil {
 		t.Fatal(err)
 	}
-	before, _ := os.ReadFile(h.Store.path(failed.ID()))
+	before, _ := os.ReadFile(h.Store.(*Store).path(failed.ID()))
 	refreshCalls := 0
 	h.Transport = roundTripFunc(func(r *http.Request) (*http.Response, error) {
 		status, body := 200, ""
@@ -92,13 +92,13 @@ func TestPollRefreshFailurePreservesCredentialAndExcludesAccount(t *testing.T) {
 		return &http.Response{StatusCode: status, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(body))}, nil
 	})
 	auth := cpa.NewCodexAuth(&http.Client{Transport: h.Transport})
-	h.Store.Refresh = func(ctx context.Context, token string) (*cpa.CodexTokenData, error) {
+	h.Store.(*Store).Refresh = func(ctx context.Context, token string) (*cpa.CodexTokenData, error) {
 		return auth.RefreshTokensWithRetry(ctx, token, 3)
 	}
 	if err := h.Poll(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	after, _ := os.ReadFile(h.Store.path(failed.ID()))
+	after, _ := os.ReadFile(h.Store.(*Store).path(failed.ID()))
 	if refreshCalls != 1 || string(before) != string(after) {
 		t.Fatal("terminal refresh error retried or overwrote credential")
 	}

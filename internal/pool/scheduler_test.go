@@ -198,3 +198,15 @@ func TestCooldownCannotBeShortenedByAnOlderError(t *testing.T) {
 		t.Fatal("shorter error replaced active cooldown")
 	}
 }
+
+func TestSyncCopiesAccountName(t *testing.T) {
+	s := NewScheduler(DefaultConfig())
+	c := Credential{Name: "alice"}
+	c.AccountID = "acct-a"
+	c.Email = "a@example.com"
+	s.Sync([]Credential{c})
+	st := s.Status()
+	if len(st) != 1 || st[0].Name != "alice" {
+		t.Fatalf("status %+v", st)
+	}
+}

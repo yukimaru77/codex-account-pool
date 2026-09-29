@@ -23,6 +23,7 @@ type Credential struct {
 	Type        string `json:"type"`
 	Disabled    bool   `json:"disabled,omitempty"`
 	LastRefresh string `json:"last_refresh,omitempty"`
+	Name        string `json:"name,omitempty"`
 }
 
 func (c Credential) ID() string {
@@ -34,6 +35,15 @@ type Store struct {
 	Dir     string
 	Refresh func(context.Context, string) (*cpa.CodexTokenData, error)
 }
+
+type AccountStore interface {
+	List() ([]Credential, error)
+	Token(ctx context.Context, id string, force bool) (Credential, error)
+	RefreshRejected(ctx context.Context, id, accessToken string) (Credential, error)
+	SetDisabled(id string, disabled bool) error
+}
+
+var _ AccountStore = (*Store)(nil)
 
 func OpenStore(dir string, refresh func(context.Context, string) (*cpa.CodexTokenData, error)) (*Store, error) {
 	if err := os.MkdirAll(filepath.Join(dir, "accounts"), 0700); err != nil {
