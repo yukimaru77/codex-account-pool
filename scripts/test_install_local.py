@@ -93,6 +93,25 @@ class InstallLocalTests(unittest.TestCase):
         self.assertFalse((self.home / "Library").exists())
         self.assertFalse((self.home / ".config").exists())
 
+    def test_kb_pool_config_is_written_once(self):
+        result = self.run_script()
+        kb_pool = self.pool_home / "kb-pool.json"
+        self.assertEqual(json.loads(kb_pool.read_text()), {
+            "origin": "http://127.0.0.1:18473",
+            "key_file": str(self.pool_home / "state" / "client.key"),
+        })
+        self.assertIn(str(kb_pool), result.stdout)
+        self.assertIn("--pool-config", result.stdout)
+        self.assertIn("config.json", result.stdout)
+        before = kb_pool.read_bytes()
+        again = self.run_script()
+        self.assertEqual(kb_pool.read_bytes(), before)
+        custom = b'{"origin": "http://pool.example:1", "key_file": "/x"}\n'
+        kb_pool.write_bytes(custom)
+        self.run_script()
+        self.assertEqual(kb_pool.read_bytes(), custom)
+        self.assertIn(str(kb_pool), again.stdout)
+
     def test_rerun_is_idempotent_even_with_wrapper_first_on_path(self):
         self.run_script()
         before = (self.pool_home / "pool.json").read_bytes()

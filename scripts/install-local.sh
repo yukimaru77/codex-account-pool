@@ -179,6 +179,29 @@ else
 fi
 mkdir -p "$STATE"
 
+# json_string S: S as a JSON string literal (paths are already checked).
+json_string() {
+	printf '"%s"' "$(printf '%s' "$1" | sed 's/[\\"]/\\&/g')"
+}
+
+# 3b. kb-pool.json for kb-repomap --pool-config and pool-rr. Never overwritten.
+listen=$(sed -n 's/^ *"listen": *"\(.*\)",\{0,1\} *$/\1/p' "$CONFIG")
+listen=${listen:-127.0.0.1:18473}
+case $listen in
+:* | 0.0.0.0:*) listen=127.0.0.1:${listen##*:} ;;
+esac
+ORIGIN=http://$listen
+KB_POOL=$POOL_HOME/kb-pool.json
+if [ -e "$KB_POOL" ]; then
+	echo "keeping existing $KB_POOL"
+else
+	printf '{"origin": %s, "key_file": %s}\n' "$(json_string "$ORIGIN")" \
+		"$(json_string "$STATE/client.key")" >"$KB_POOL.tmp.$$"
+	chmod 0600 "$KB_POOL.tmp.$$"
+	mv -f "$KB_POOL.tmp.$$" "$KB_POOL"
+	echo "wrote $KB_POOL"
+fi
+
 # 4. codex wrapper. Anything else at $WRAPPER is kept as codex.pre-pool-<date>.
 tmp_wrapper=$WRAPPER.tmp.$$
 cat >"$tmp_wrapper" <<WRAPPER
@@ -260,8 +283,10 @@ Next steps:
   "$POOL_BIN" account list --config "$CONFIG"
 
 For kb-repomap (add to your shell profile):
-  export KB_POOL_ORIGIN=http://127.0.0.1:18473
+  export KB_POOL_ORIGIN=$ORIGIN
   export KB_POOL_KEY_FILE="$STATE/client.key"
+For kb create, add to build_args in ~/.config/kb/config.json:
+  "--pool-config", "$KB_POOL"
 
 Service log: $LOG
 EOF
