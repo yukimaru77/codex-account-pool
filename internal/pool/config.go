@@ -72,13 +72,22 @@ func DefaultConfig() Config {
 
 func LoadConfig(path string) (Config, error) {
 	c := DefaultConfig()
-	defaultRoutes := c.RoundRobin
-	c.RoundRobin = nil
 	b, err := os.ReadFile(path)
 	if err != nil {
 		return c, err
 	}
-	if err = json.Unmarshal(b, &c); err != nil {
+	return ParseConfig(b, filepath.Dir(path))
+}
+
+// ParseConfig decodes and validates a config as LoadConfig does, resolving
+// relative paths against base (the config file's directory). It touches no
+// files, so a config can be checked before it is written.
+func ParseConfig(b []byte, base string) (Config, error) {
+	c := DefaultConfig()
+	defaultRoutes := c.RoundRobin
+	c.RoundRobin = nil
+	err := json.Unmarshal(b, &c)
+	if err != nil {
 		return c, err
 	}
 	if c.RoundRobin == nil {
@@ -96,7 +105,6 @@ func LoadConfig(path string) (Config, error) {
 	if c.StateDir == "" {
 		return c, fmt.Errorf("state_dir is required")
 	}
-	base := filepath.Dir(path)
 	if !filepath.IsAbs(c.StateDir) {
 		c.StateDir = filepath.Join(base, c.StateDir)
 	}

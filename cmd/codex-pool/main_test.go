@@ -170,3 +170,21 @@ func TestEnableDisableAcceptsDirectoryName(t *testing.T) {
 		t.Fatal("unknown directory name accepted")
 	}
 }
+
+func TestInitRejectsBadListenWithoutWritingFile(t *testing.T) {
+	for _, args := range [][]string{
+		{"--listen", "no-port"},
+		{"--accounts-dir", "d", "--codex-bin", "relative/codex"},
+	} {
+		dir := t.TempDir()
+		config := filepath.Join(dir, "pool.json")
+		var output bytes.Buffer
+		if err := run(append([]string{"init", "--config", config}, args...), &output); err == nil {
+			t.Fatalf("%q accepted", args)
+		}
+		entries, _ := os.ReadDir(dir)
+		if len(entries) != 0 {
+			t.Fatalf("%q left files behind: %v", args, entries)
+		}
+	}
+}

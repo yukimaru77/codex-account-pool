@@ -359,6 +359,11 @@ func initialize(path string, out io.Writer, opts initOptions) error {
 		cfg.Listen = opts.Listen
 	}
 	b, _ := json.MarshalIndent(cfg, "", "  ")
+	// Validate the flag values before anything is written, so a bad flag
+	// leaves no file behind.
+	if _, err := pool.ParseConfig(b, filepath.Dir(path)); err != nil {
+		return err
+	}
 	f, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
 	if err != nil {
 		return err
