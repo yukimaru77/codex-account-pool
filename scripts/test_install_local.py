@@ -87,7 +87,8 @@ class InstallLocalTests(unittest.TestCase):
         self.assertTrue((self.home / ".codex-accounts").is_dir())
         self.assertEqual(self.backups(), [])
         self.assertIn("KB_POOL_ORIGIN=http://127.0.0.1:18473", result.stdout)
-        self.assertIn(f"KB_POOL_KEY_FILE={self.pool_home}/state/client.key", result.stdout)
+        self.assertIn(f'KB_POOL_KEY_FILE="{self.pool_home}/state/client.key"', result.stdout)
+        self.assertIn(f'"{self.prefix}/codex-pool" account add main --from', result.stdout)
         self.assertIn("account add main --from", result.stdout)
         self.assertFalse((self.home / "Library").exists())
         self.assertFalse((self.home / ".config").exists())
@@ -122,6 +123,53 @@ class InstallLocalTests(unittest.TestCase):
         self.assertEqual(len(backups), 1)
         self.assertTrue((self.prefix / backups[0]).is_symlink())
         self.assertEqual((self.prefix / "codex").read_text(), self.wrapper_text())
+
+    def assert_rejected_wrapper_bin(self, codex_bin):
+        result = self.run_script("--codex-bin", str(codex_bin), path_dirs=[], check=False)
+        self.assertNotEqual(result.returncode, 0, result.stdout)
+        self.assertIn("wrapper", result.stderr)
+        self.assertIn(str(self.old_codex), result.stderr)  # hint: the symlink's target
+        self.assertFalse((self.pool_home / "pool.json").exists())
+        self.assertTrue((self.prefix / "codex").is_symlink())  # nothing moved aside
+
+    def test_codex_bin_at_wrapper_location_is_rejected(self):
+        self.prefix.mkdir()
+        (self.prefix / "codex").symlink_to(self.old_codex)
+        self.assert_rejected_wrapper_bin(self.prefix / "codex")
+
+    def test_codex_bin_linking_through_wrapper_location_is_rejected(self):
+        self.prefix.mkdir()
+        (self.prefix / "codex").symlink_to(self.old_codex)
+        via = self.tmp / "via" / "codex"
+        via.parent.mkdir()
+        via.symlink_to(self.prefix / "codex")
+        self.assert_rejected_wrapper_bin(via)
+
+    def test_detection_skips_links_to_wrapper_location(self):
+        self.run_script()
+        link = self.tmp / "linkbin" / "codex"
+        link.parent.mkdir()
+        link.symlink_to(self.prefix / "codex")
+        shutil.rmtree(self.pool_home)
+        self.run_script(path_dirs=[link.parent, self.old_codex.parent])
+        self.assertEqual(self.config()["codex_bin"], str(self.old_codex))
+
+    def test_explicit_codex_bin_differing_from_existing_config_warns(self):
+        self.run_script()
+        before = (self.pool_home / "pool.json").read_bytes()
+        other = self.tmp / "other" / "codex"
+        write_exe(other, "#!/bin/sh\n")
+        result = self.run_script("--codex-bin", str(other))
+        self.assertEqual((self.pool_home / "pool.json").read_bytes(), before)
+        self.assertIn("--codex-bin", result.stderr)
+        self.assertIn(str(self.old_codex), result.stderr)
+        self.assertIn(str(self.pool_home / "pool.json"), result.stderr)
+        same = self.run_script("--codex-bin", str(self.old_codex))
+        self.assertNotIn("--codex-bin", same.stderr)
+
+    def test_reports_when_no_codex_is_on_path(self):
+        result = self.run_script("--codex-bin", str(self.old_codex), path_dirs=[])
+        self.assertIn("(none on PATH)", result.stdout)
 
     def test_detection_skips_other_pool_wrappers(self):
         other = self.tmp / "otherbin" / "codex"

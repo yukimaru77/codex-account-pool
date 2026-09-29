@@ -42,12 +42,12 @@ while [ $# -gt 0 ]; do
 	esac
 done
 
-REPO=$(cd "$(dirname "$0")/.." && pwd)
+REPO=$(CDPATH='' cd "$(dirname "$0")/.." && pwd)
 
 # absdir DIR: create DIR and print its absolute path.
 absdir() {
 	mkdir -p "$1"
-	(cd "$1" && pwd)
+	(CDPATH='' cd "$1" && pwd)
 }
 
 # check_path PATH: reject characters that the wrapper, plist or unit would
@@ -61,7 +61,43 @@ check_path() {
 
 # canon_dir DIR: physical path of DIR, empty when it does not exist.
 canon_dir() {
-	(cd "$1" 2>/dev/null && pwd -P) || true
+	(CDPATH='' cd "$1" 2>/dev/null && pwd -P) || true
+}
+
+# link_target FILE: FILE's symlink target resolved against FILE's directory.
+link_target() {
+	t=$(readlink "$1") || return 1
+	case $t in
+	/*) echo "$t" ;;
+	*) echo "$(dirname "$1")/$t" ;;
+	esac
+}
+
+# reaches_wrapper FILE: FILE is the wrapper location ($PREFIX/codex, compared
+# by physical directory) or a symlink chain passing through it. Each hop is
+# checked, so a $PREFIX/codex that links to the real codex does not hide it.
+reaches_wrapper() {
+	f=$1
+	n=0
+	while :; do
+		d=$(canon_dir "$(dirname "$f")")
+		[ -n "$d" ] && [ "$d/$(basename "$f")" = "$WRAPPER_REAL" ] && return 0
+		[ -L "$f" ] || return 1
+		f=$(link_target "$f") || return 1
+		n=$((n + 1))
+		[ $n -lt 40 ] || return 1
+	done
+}
+
+# final_target FILE: end of FILE's symlink chain.
+final_target() {
+	f=$1
+	n=0
+	while [ -L "$f" ] && [ $n -lt 40 ]; do
+		f=$(link_target "$f") || break
+		n=$((n + 1))
+	done
+	echo "$f"
 }
 
 # is_pool_wrapper FILE: FILE is a script that runs codex-pool launch.
@@ -80,6 +116,7 @@ STATE=$POOL_HOME/state
 LOG=$STATE/serve.log
 POOL_BIN=$PREFIX/codex-pool
 WRAPPER=$PREFIX/codex
+WRAPPER_REAL=$(canon_dir "$PREFIX")/codex
 for p in "$PREFIX" "$POOL_HOME" "$ACCOUNTS_DIR" "$HOME"; do
 	check_path "$p"
 done
@@ -99,21 +136,31 @@ echo "installed $POOL_BIN"
 # 2-3. pool.json. An existing config is kept as is, including its codex_bin.
 if [ -e "$CONFIG" ]; then
 	echo "keeping existing $CONFIG"
+	stored=$(sed -n 's/^ *"codex_bin": *"\(.*\)",\{0,1\} *$/\1/p' "$CONFIG")
+	if [ -n "$CODEX_BIN" ] && [ "$CODEX_BIN" != "$stored" ]; then
+		echo "install-local: WARNING: --codex-bin $CODEX_BIN ignored; $CONFIG keeps codex_bin ${stored:-(unset)}. Edit codex_bin there to change it." >&2
+	fi
+	if [ -n "$stored" ] && reaches_wrapper "$stored"; then
+		echo "install-local: WARNING: codex_bin $stored in $CONFIG is the wrapper location; codex would exec itself. Set it to the real codex." >&2
+	fi
 else
 	if [ -z "$CODEX_BIN" ]; then
 		# $PREFIX/codex is skipped: it is the wrapper or is moved aside below.
 		prefix_real=$(canon_dir "$PREFIX")
 		old_ifs=$IFS
 		IFS=:
+		set -f
 		for dir in $PATH; do
 			IFS=$old_ifs
 			candidate=${dir:-.}/codex
 			[ -f "$candidate" ] && [ -x "$candidate" ] || continue
 			[ "$(canon_dir "${dir:-.}")" = "$prefix_real" ] && continue
+			reaches_wrapper "$candidate" && continue
 			is_pool_wrapper "$candidate" && continue
 			CODEX_BIN=$candidate
 			break
 		done
+		set +f
 		IFS=$old_ifs
 		[ -n "$CODEX_BIN" ] || die "no codex found on PATH (other than the pool wrapper); pass --codex-bin PATH"
 	fi
@@ -121,6 +168,9 @@ else
 	/*) ;;
 	*) die "--codex-bin must be an absolute path: $CODEX_BIN" ;;
 	esac
+	if reaches_wrapper "$CODEX_BIN"; then
+		die "codex bin $CODEX_BIN is (or links to) the wrapper location $WRAPPER; codex would exec itself. Pass the real codex, e.g. --codex-bin $(final_target "$CODEX_BIN")"
+	fi
 	[ -x "$CODEX_BIN" ] || die "codex bin is not executable: $CODEX_BIN"
 	is_pool_wrapper "$CODEX_BIN" && die "codex bin is a codex-pool wrapper: $CODEX_BIN"
 	"$POOL_BIN" init --config "$CONFIG" --accounts-dir "$ACCOUNTS_DIR" \
@@ -205,13 +255,13 @@ fi
 cat <<EOF
 
 Next steps:
-  $POOL_BIN account add main --from ~/.codex/auth.json --config "$CONFIG"
-  $POOL_BIN account add NAME --config "$CONFIG"      # log in another account
-  $POOL_BIN account list --config "$CONFIG"
+  "$POOL_BIN" account add main --from ~/.codex/auth.json --config "$CONFIG"
+  "$POOL_BIN" account add NAME --config "$CONFIG"      # log in another account
+  "$POOL_BIN" account list --config "$CONFIG"
 
 For kb-repomap (add to your shell profile):
   export KB_POOL_ORIGIN=http://127.0.0.1:18473
-  export KB_POOL_KEY_FILE=$STATE/client.key
+  export KB_POOL_KEY_FILE="$STATE/client.key"
 
 Service log: $LOG
 EOF
@@ -225,4 +275,9 @@ EOF
 fi
 echo
 echo "which -a codex:"
-which -a codex 2>/dev/null | sed 's/^/  /' || echo "  (none on PATH)"
+found=$(which -a codex 2>/dev/null || true)
+if [ -n "$found" ]; then
+	printf '%s\n' "$found" | sed 's/^/  /'
+else
+	echo "  (none on PATH)"
+fi
