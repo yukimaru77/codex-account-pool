@@ -24,8 +24,8 @@ scripts/install-local.sh
 
 | オプション | 既定値 | 内容 |
 | --- | --- | --- |
-| `--prefix` | `~/.local/bin` | `codex-pool` とラッパー `codex` の置き場所 |
-| `--pool-home` | `~/.codex-pool` | `pool.json` と `state/` |
+| `--prefix` | `~/.local/bin` | `codex-pool` とラッパー `codex`・`pool-rr` の置き場所 |
+| `--pool-home` | `~/.codex-pool` | `pool.json`・`kb-pool.json` と `state/` |
 | `--accounts-dir` | `~/.codex-accounts` | アカウントごとの `CODEX_HOME` |
 | `--codex-bin` | PATH上の `codex` | ラッパーが最終的に実行する本物のCodex |
 
@@ -34,9 +34,15 @@ scripts/install-local.sh
 1. `go build` で `codex-pool` を `--prefix` に置く。
 2. `pool.json` が無ければ `codex-pool init` で作る。既にあれば一切変更しない。
    `round_robin_endpoints` は書かず、組み込みの既定入口を使う。
-3. ラッパー `--prefix/codex` を置く。同名の別ファイルがあれば
+3. `kb-pool.json` が無ければ作る。内容は `origin`（`pool.json` の `listen`）と
+   `key_file`（`state/client.key` の絶対パス）の2項目だけ。既にあれば変更しない。
+   `kb-repomap` の `--pool-config`、`pool-rr`、`scripts/compact-jsonl.py` が読む。
+4. ラッパー `--prefix/codex` を置く。同名の別ファイルがあれば
    `codex.pre-pool-日付` へ退避する。ラッパー自身は退避しない。
-4. 常駐を登録する。macOSは `~/Library/LaunchAgents/com.local.codex-pool.plist`、
+5. ラッパー `--prefix/pool-rr` を置く。中身はこのリポジトリの `scripts/pool-rr.py` を
+   `--config ~/.codex-pool/kb-pool.json` 付きで実行するだけなので、リポジトリは移動・削除しない。
+   同名の別ファイル（`scripts/pool-rr.py` へのsymlink等）は `pool-rr.pre-pool-日付` へ退避する。
+6. 常駐を登録する。macOSは `~/Library/LaunchAgents/com.local.codex-pool.plist`、
    Linuxは `~/.config/systemd/user/codex-pool.service`。
    既に動いていれば新しいバイナリで再起動する。
 
@@ -146,9 +152,108 @@ export KB_POOL_ORIGIN=http://127.0.0.1:18473
 export KB_POOL_KEY_FILE="$HOME/.codex-pool/state/client.key"
 ```
 
+`kb create` の圧縮には `~/.config/kb/config.json` の `build_args` で
+インストーラが作った `kb-pool.json` を指定する。既存の `stores` は残す。
+`~` は展開されるが、インストーラの表示どおり絶対パスで書いてもよい。
+
+```json
+{
+  "stores": [],
+  "build_args": ["--pool-config", "~/.codex-pool/kb-pool.json", "--workers", "12"]
+}
+```
+
 `kb create` の圧縮や画像生成は `/_pool/rr/*` のround-robin入口、
 `kb NAME --remote codex` はプールへ直接つなぐKB注入セッションになる。
 どちらもループバックなので `private_http` は不要。
+
+### pool-rr で1回の実行だけround-robinにする
+
+```bash
+pool-rr codex exec "このリポジトリを調べて"
+pool-rr kb paper-demo --remote codex exec "この論文の要点を説明して"
+pool-rr kb paper-demo --remote codex        # TUI
+```
+
+`pool-rr` は `kb-pool.json` の接続先と `client.key` を使い、その実行の Codex だけ
+provider を `/_pool/rr` に向ける。各推論要求ごとにアカウントを巡回する。
+`scripts/pool-rr.py` を直接実行した場合も、`~/.codex-pool/kb-pool.json` があれば
+それを既定の設定として使う（無ければ従来どおりリポジトリの `bridge.json`）。
+
+`pool-rr` はPATH上の `codex` を実行するため、ラッパー経由になる。
+このためラッパーの `codex-pool: account=名前 remaining=残量%` は表示されるが、
+推論はRRのproviderを通るので、実際に使うアカウントは要求ごとに号池が選ぶ。
+表示されたアカウントは起動時の `CODEX_HOME` の選択にすぎない。
+モデル一覧は `$CODEX_HOME/models_cache.json`（既定 `~/.codex/models_cache.json`）を使うため、
+先に通常の `codex` を一度起動しておく。
+
+### RRで使うアカウントを固定する（X-Pool-Account）
+
+`/_pool/rr/*` への要求に `X-Pool-Account: <auth_index>` を付けると、
+そのアカウントだけを使う（通常RRの順番は進めない）。
+値は32桁16進の完全な `auth_index` で、メールアドレスや名前ではない。
+名前から調べるには `account list` の `AUTH_INDEX` 列を見る（管理キー不要）。
+`codex-pool status` の出力（`/_pool/status` と同じJSON）の `auth_index` でもよい。
+
+```bash
+codex-pool account list --config ~/.codex-pool/pool.json
+codex-pool status --config ~/.codex-pool/pool.json
+```
+
+指定したアカウントが不明・無効・利用枠不足・クールダウン中なら503を返し、
+別アカウントへ切り替えない。空値や複数指定は400。
+このヘッダーは上流へ送らず、通常のCodex用URLでは無視する。
+
+### 画像RRの形式
+
+`/_pool/rr/images/generations` と `/_pool/rr/images/edits` はJSONだけを受け付ける。
+
+```json
+{"prompt": "画像の指示"}
+{"prompt": "編集指示", "images": [{"image_url": "data:image/png;base64,..."}]}
+```
+
+上が生成、下が編集。編集の `images` は1〜5枚。
+model・quality・size・background・n などは号池が固定する（`gpt-image-2`、auto）ため、
+指定すると400になる。multipartはRR入口では400になる。
+上流の編集APIもmultipartには400 `Unsupported content type` を返すため、
+画像は `data:` URLにしてJSONで送る。
+
+### RRの headers
+
+`pool.json` の `round_robin_endpoints` の各入口に `headers` を書くと、
+号池が上流へ送る際に毎回上書きする。書けるのは
+`User-Agent`・`originator`・`Accept`・`Content-Type` だけで、他の名前は起動時にエラーになる。
+`init` が作る `pool.json` は `round_robin_endpoints` 自体を書かず、組み込みの既定入口を使う。
+既定入口に `headers` は無い。`round_robin_endpoints` を書くと既定入口を置き換えるため、
+必要な場合は4つの入口を全て明示したうえで追加し、`serve` を再起動する。
+
+```json
+"round_robin_endpoints": {
+  "/_pool/rr/images/generations": {"upstream_path": "/backend-api/codex/images/generations"},
+  "/_pool/rr/images/edits": {"upstream_path": "/backend-api/codex/images/edits"},
+  "/_pool/rr/responses/compact": {"upstream_path": "/backend-api/codex/responses/compact"},
+  "/_pool/rr/responses": {"upstream_path": "/backend-api/codex/responses",
+                          "headers": {"originator": "codex_exec"}}
+}
+```
+
+値は実機のCodexの通信で観測したものを使う（上の値は例）。認証ヘッダーは書かない。
+
+### kb decrypt の消費
+
+`kb decrypt NAME` はblobの数をNとすると、各波で high と max を N 本ずつ、
+合計 2N 本を並列に投げる。波は最大4回（1blobあたり最大8回）。
+全てプールのアカウントの週の利用枠を使うため、blobが多いKBでは消費が大きい。
+実行前に `account list` で残量を確認する。
+
+### Claude Code から使う
+
+`kb NAME claude` は復号済みの平文（`dev.txt` と選択済みの `raw.txt`）を
+システムプロンプトとして渡し、ローカルのClaude Codeセッションを起動する。
+号池は使わない。先に `kb decrypt NAME` が必要。
+`--remote` はCodex専用で、Claude Codeでは使えない。
+号池はOpenAI向けの通信にしかKBを注入できず、Anthropicの通信には介在できないため。
 
 ## 5. ブリッジからの移行
 
@@ -160,6 +265,9 @@ launchctl bootout gui/$(id -u)/com.local.codex-account-pool-bridge
 ```
 
 `~/.zshrc` などの `KB_POOL_ORIGIN` をループバックへ書き換える。
+`~/.config/kb/config.json` の `build_args` の `--pool-config` を
+`~/.codex-pool/kb-pool.json` に変える。`bridge.json` はコピーしない。
+`pool-rr` はインストーラが置いたものを使う（以前のsymlinkは退避される）。
 `bridge.json` とブリッジ用の専用CAは不要になる。
 CAを撤去する場合は [READMEのブリッジの節](../README.md#mac-の透過ブリッジ) の手順に従う。
 Linuxのプールは別プロセスとして残る。ローカルのプールと同じアカウントを
