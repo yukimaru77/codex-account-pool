@@ -1,0 +1,15 @@
+# Rendered by scripts/install-local.sh; edit the template, not the copy.
+[Unit]
+Description=codex-account-pool (local)
+After=network-online.target
+
+[Service]
+ExecStart="@CODEX_POOL_BIN@" serve --config "@POOL_CONFIG@"
+WorkingDirectory=@POOL_HOME@
+Restart=always
+RestartSec=5
+StandardOutput=append:@SERVE_LOG@
+StandardError=append:@SERVE_LOG@
+
+[Install]
+WantedBy=default.target
