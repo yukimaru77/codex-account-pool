@@ -130,6 +130,13 @@ func accountAdd(cfg pool.Config, store *pool.CodexHomeStore, execLogin func(stri
 	if err != nil {
 		return fmt.Errorf("account %s: %w", name, err)
 	}
+	if other, err := registeredAs(store, name, c.ID()); err != nil {
+		return err
+	} else if other != "" {
+		// The directory was created by this command; drop it with its copy.
+		_ = os.RemoveAll(dir)
+		return fmt.Errorf("account already registered as %s", other)
+	}
 	if from != "" {
 		if err := retireSource(cfg, from, authPath, out); err != nil {
 			return err
@@ -185,6 +192,25 @@ func sameCodexHomeAuth(codexHome, path string) bool {
 	home, ok1 := resolve(codexHome)
 	parent, ok2 := resolve(filepath.Dir(path))
 	return ok1 && ok2 && home == parent
+}
+
+// registeredAs returns the name of another directory already holding the
+// account id. Each directory is read directly, since List keeps only the
+// first of two duplicates by name order.
+func registeredAs(store *pool.CodexHomeStore, name, id string) (string, error) {
+	names, err := store.Names()
+	if err != nil {
+		return "", err
+	}
+	for _, other := range names {
+		if other == name {
+			continue
+		}
+		if c, err := store.Validate(other); err == nil && c.ID() == id {
+			return other, nil
+		}
+	}
+	return "", nil
 }
 
 func credentialByName(store *pool.CodexHomeStore, name string) (pool.Credential, error) {

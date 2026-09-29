@@ -81,6 +81,8 @@ codex-pool account list --config ~/.codex-pool/pool.json
 それ以外のパスから取り込んだ場合は元ファイルに触れず、
 `warning: <PATH> still holds the same refresh token; ...` を表示する。
 元ファイルは以後使わないこと。
+既に別の名前で登録済みのアカウントを追加しようとすると
+`account already registered as <名前>` で拒否し、作りかけのディレクトリを消す。
 別の号池（Linuxの号池など）に登録済みのアカウントは、コピーせず
 `account add NAME`（`--from` なし）で別途ログインすること。
 

@@ -506,3 +506,43 @@ func TestAccountAddFromOtherPathWarns(t *testing.T) {
 		t.Fatalf("output = %q, want warning %q", out.String(), want)
 	}
 }
+
+func TestAccountAddRefusesDuplicateAccount(t *testing.T) {
+	env := newAccountEnv(t)
+	existing := env.store.Path("mid")
+	if err := os.MkdirAll(existing, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(existing, "auth.json"), codexAuthJSON(t, "acct-dup", "dup@example.com"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	// Both a name sorting after and one sorting before the existing
+	// directory are refused, through --from and through login.
+	src := filepath.Join(t.TempDir(), "auth.json")
+	if err := os.WriteFile(src, codexAuthJSON(t, "acct-dup", "dup@example.com"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	login := func(dir string) error {
+		return os.WriteFile(filepath.Join(dir, "auth.json"), codexAuthJSON(t, "acct-dup", "dup@example.com"), 0600)
+	}
+	for _, c := range []struct {
+		name  string
+		args  []string
+		login func(string) error
+	}{
+		{"zed", []string{"add", "zed", "--from", src}, noLogin(t)},
+		{"aaa", []string{"add", "aaa"}, login},
+	} {
+		var out bytes.Buffer
+		err := runAccount(context.Background(), env.cfg, env.store, noStatus, c.login, c.args, &out)
+		if err == nil || err.Error() != "account already registered as mid" {
+			t.Fatalf("%s: err = %v", c.name, err)
+		}
+		if _, err := os.Lstat(env.store.Path(c.name)); !os.IsNotExist(err) {
+			t.Fatalf("%s: new directory left behind: %v", c.name, err)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(existing, "auth.json")); err != nil {
+		t.Fatal("existing account touched", err)
+	}
+}
