@@ -10,3 +10,4 @@ __pycache__/
 *.jsonl
 .env
 .env.*
+.claude/worktrees/
