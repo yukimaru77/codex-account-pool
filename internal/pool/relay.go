@@ -116,12 +116,15 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	path := r.URL.Path
 	rawPath := r.URL.RawPath
 	policy := FillFirst
-	var routeHeaders map[string]string
 	if route, ok := h.Config.RoundRobin[path]; ok {
 		path = route.Path
 		rawPath = ""
 		policy = RoundRobin
-		routeHeaders = route.Headers
+	}
+	if policy == RoundRobin && (r.URL.Path == "/_pool/rr/images/generations" || r.URL.Path == "/_pool/rr/images/edits") {
+		if !prepareImageRR(w, r, path) {
+			return
+		}
 	}
 	if path == "/backend-api/codex/responses" && strings.EqualFold(r.Header.Get("Upgrade"), "websocket") {
 		// Like codex-lb's direct egress, negotiate plain frames so terminal
@@ -147,7 +150,17 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
-	id, err := h.Scheduler.Select(policy, path, "")
+	pinned := ""
+	if policy == RoundRobin {
+		if values, present := r.Header[http.CanonicalHeaderKey("X-Pool-Account")]; present {
+			if len(values) != 1 || strings.TrimSpace(values[0]) == "" || strings.ContainsAny(values[0], " ,\t\r\n") {
+				http.Error(w, "X-Pool-Account must contain one full auth_index", 400)
+				return
+			}
+			pinned = values[0]
+		}
+	}
+	id, err := h.Scheduler.Select(policy, path, pinned)
 	if err != nil {
 		http.Error(w, err.Error(), 503)
 		return
@@ -187,9 +200,10 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			pr.Out.URL.RawPath = rawPath
 			pr.Out.URL.RawQuery = pr.In.URL.RawQuery
 			stripIdentity(pr.Out.Header)
-			// Route headers go before identity headers so pooled credentials win.
-			for k, v := range routeHeaders {
-				pr.Out.Header.Set(k, v)
+			if policy == RoundRobin {
+				for name, value := range h.Config.RoundRobin[r.URL.Path].Headers {
+					pr.Out.Header.Set(name, value)
+				}
 			}
 			pr.Out.Header.Set("Authorization", "Bearer "+c.AccessToken)
 			pr.Out.Header.Set("Chatgpt-Account-Id", c.AccountID)
@@ -298,7 +312,7 @@ func (h *Handler) observeCooldown(id, path string, headers http.Header) {
 func identityHeader(name string) bool {
 	n := strings.ToLower(strings.ReplaceAll(name, "_", "-"))
 	switch n {
-	case "authorization", "cookie", "cookie2", "x-api-key", "api-key",
+	case "authorization", "cookie", "cookie2", "x-api-key", "api-key", "x-pool-account",
 		"account", "account-id", "chatgpt-account-id", "openai-account-id", "x-account-id",
 		"workspace", "workspace-id", "chatgpt-workspace-id", "openai-workspace-id", "x-workspace-id",
 		"organization", "organization-id", "openai-organization", "openai-organization-id", "x-organization-id",

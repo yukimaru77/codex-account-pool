@@ -1,6 +1,7 @@
 package pool
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -52,11 +53,12 @@ func TestRoundRobinRouteHeaders(t *testing.T) {
 		{"empty", ``},
 		{"colon", `Bad:Name`},
 		{"space", `Bad Name`},
-		{"tab", "Bad\\tName"},
+		{"not_allowlisted", `X-Custom`},
+		{"identity", `Chatgpt-Account-Id`},
 	} {
 		t.Run("rejects_"+tc.name, func(t *testing.T) {
 			_, err := load(t, `{"round_robin_endpoints":{"/_pool/rr/responses":{"upstream_path":"/backend-api/codex/responses","headers":{"`+tc.key+`":"v"}}}}`)
-			want := `invalid header name in route "/_pool/rr/responses"`
+			want := fmt.Sprintf("unsupported RR header %q", tc.key)
 			if err == nil || err.Error() != want {
 				t.Fatalf("err = %v, want %s", err, want)
 			}

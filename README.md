@@ -183,6 +183,64 @@ Linuxでの実リフレッシュと保存の確認は [検証記録](docs/valida
 
 ## round-robin 専用入口
 
+### Codex をその実行だけ RR にする
+
+```bash
+python3 scripts/pool-rr.py codex exec "このリポジトリを調べて"
+# scripts/pool-rr.py を PATH 上の pool-rr にリンクした場合:
+pool-rr codex exec -m gpt-6-astra "このリポジトリを調べて"
+# KB を使った exec（kb-repomap の exec / pool-rr 対応版が必要）:
+pool-rr kb paper-demo --remote codex exec -m gpt-6-astra "この論文の要点を説明して"
+# TUI でも利用できる:
+pool-rr kb paper-demo --remote codex
+```
+
+`bridge.json` の origin / state_dir / private_http を使う。
+別設定は `pool-rr --config /path/to/bridge.json codex exec ...`。
+モデル一覧は通常の Codex が保存した `$CODEX_HOME/models_cache.json`
+（既定 `~/.codex/models_cache.json`）を使用するため、先に通常の Codex を一度起動する。
+別の一覧ファイルは bridge.json の `rr_model_catalog` に絶対パスで指定できる。
+Codex の provider を実行時の `-c` だけで RR に指定し、client.key は子プロセスの
+環境変数経由で渡す。通常の Codex / Codex App の設定・ログイン状態は変更しない。
+Codex 側で provider 設定を再上書きする引数とは併用しない。
+
+`kb NAME [KB-options] codex ...` の引数はそのまま渡す。`codex` より前が KB の指定、
+後ろが Codex 本来のサブコマンド・オプションになる。KB が起動する Codex に
+同じ provider 設定を渡し、`--remote` の KB 登録・セッションへの紐付けも
+同じ号池を使う。kb の保存済み接続設定より、この実行の `bridge.json` を優先する。
+これらは子プロセスの環境変数 `KB_CODEX_CONFIG_OVERRIDES`、`KB_POOL_ORIGIN`、
+`KB_POOL_KEY_FILE`、`KB_POOL_PRIVATE_HTTP` で渡し、KB の永続設定も変更しない。
+
+SSE を使い、ツール後の続きを含め各推論 HTTP 要求でアカウントを巡回する。
+1 exec 全体のアカウント固定ではない。残り M% の予約枠も使えるが、0%、
+無効・クールダウン中のアカウントは対象外。圧縮も RR の Responses 経路を使う。
+WebSocket 接続単位の固定を避けるため、この provider は WebSocket を無効にする。
+生成の自動再送は無効。失敗時はエラーをそのまま返す。
+
+`X-Pool-Account: <auth_index>` ヘッダーで、RR APIの使用アカウントを固定できる。
+値は管理API `GET /_pool/status` にある完全な `auth_index`（メールアドレスや短縮IDではない）。
+指定なしは従来のラウンドロビン。指定ありはそのアカウントだけを使い、通常RRの順番を進めない。
+不明・無効・利用枠不足・クールダウン等で指定アカウントを使えない場合は503とし、
+別アカウントへ自動変更しない。空値・複数指定は400。このヘッダーは上流へ送らない。
+通常のCodex用URLでは選択に使わない。WebSocketでは接続時に指定する。
+
+引用文献ごとに1アカウントを割り当て、同じ文献内の全コンパクト要求に同じヘッダーを付けると、
+文献間は並列、文献内は同一アカウントで直列に処理できる。本文JSONの形式は変更不要。
+
+各 `round_robin_endpoints` の `headers` に `User-Agent`、`originator`、`Accept`、
+`Content-Type` を設定できる。号池が上流へ送る際に毎回上書きする（通常URLには適用しない）。
+実機で観測した値はLinux側のGit管理外 `pool.json` に保存する。認証は従来どおり選択した
+アカウントから設定し、認証ヘッダーや一時的なセッションIDはこの設定に入れない。
+HTTP/SSEとWebSocketの接続専用ヘッダーは混用しない。Codex更新後は実通信と再照合する。
+
+画像用の `/_pool/rr/images/generations` は `{"prompt":"画像の指示"}`、
+`/_pool/rr/images/edits` は `{"prompt":"編集指示","images":[{"image_url":"data:image/png;base64,..."}]}`
+のみをPOSTする。編集は1〜5枚。model・quality・size・background・n等の指定は400になる。
+内部で Codex CLI 0.155.1 と同じ `model: gpt-image-2`、quality/size/background: auto に固定し、nは省略する。
+通常の画像URLは従来どおり素通し。画像以外の専用RRも従来どおり。
+画像RRの転送先は `/backend-api/codex/images/generations` と `/backend-api/codex/images/edits`。
+転送先設定が変わった場合は503で停止するため、Codex更新時に画像API実装と照合する。
+
 `init` が生成する `pool.json` の設定:
 
 ```json
@@ -226,13 +284,15 @@ Tailscaleで接続できるMacから、リポジトリのディレクトリで�
 ```bash
 python3 scripts/compact-jsonl.py prepared.jsonl \
   --model gpt-6-astra \
-  --origin https://pool.example:18473 \
-  --key-file state/client.key \
+  --pool-config bridge.json \
   --output compact.json
 ```
 
 入力ファイルを `-` にすると標準入力から読む。`--output` 省略時は標準出力へ返す。
 `--instructions` で圧縮要求のinstructionsを指定できる。
+接続先・キーの場所・HTTP許可はブリッジや `pool-rr` と同じ `bridge.json` を参照する。
+`--pool-config` 省略時も、`--origin` がなければこのリポジトリの `bridge.json` を読む。
+従来の `--origin`・`--key-file`・`--private-http` による個別指定も使える。
 実アカウントの利用量を消費するが、このコマンドにはMacの透過ブリッジ起動は不要。
 
 出力は `encrypted_content` にblobを含む**圧縮item全体のJSON**。次のResponses要求の

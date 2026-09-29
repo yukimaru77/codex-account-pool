@@ -11,7 +11,7 @@ import shutil
 def command(args):
     config_path = Path(args.config).expanduser().resolve()
     config = json.loads(config_path.read_text())
-    state = Path(config["state_dir"])
+    state = Path(config.get("state_dir", "state")).expanduser()
     if not state.is_absolute():
         state = config_path.parent / state
     ca = state / "ca"
@@ -48,8 +48,11 @@ def command(args):
         if not origin:
             scheme = "https" if config.get("tls_cert") else "http"
             origin = scheme + "://" + config["listen"]
+        key_file = Path(config.get("key_file", state / "client.key")).expanduser()
+        if not key_file.is_absolute():
+            key_file = config_path.parent / key_file
         cmd += ["--set", "pool_origin=" + origin,
-                "--set", "pool_key_file=" + str(state / "client.key"),
+                "--set", "pool_key_file=" + str(key_file),
                 "--set", "pool_private_http=" + str(args.private_http or config.get("private_http", False)).lower()]
     return cmd
 
@@ -57,7 +60,9 @@ def command(args):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("mode", choices=["ca", "observe", "pool"])
-    parser.add_argument("--config", default="pool.json")
+    client_config = Path(__file__).resolve().parent.parent / "bridge.json"
+    parser.add_argument("--config", default=str(client_config) if client_config.is_file() else "pool.json",
+                        help="repository bridge.json when present; otherwise pool.json")
     parser.add_argument("--capture", default="codex,Codex")
     parser.add_argument("--exclude-codex-app", action=argparse.BooleanOptionalAction, default=None,
                         help="leave Codex.app/ChatGPT.app bundle processes on their direct connection (Mac); also configurable as exclude_codex_app")

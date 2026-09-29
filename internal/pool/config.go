@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"net"
-	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -132,13 +131,18 @@ func ParseConfig(b []byte, base string) (Config, error) {
 		}
 	}
 	for endpoint, route := range c.RoundRobin {
+		for name, value := range route.Headers {
+			switch strings.ToLower(name) {
+			case "user-agent", "originator", "accept", "content-type":
+			default:
+				return c, fmt.Errorf("unsupported RR header %q", name)
+			}
+			if strings.TrimSpace(value) == "" || strings.ContainsAny(value, "\r\n") {
+				return c, fmt.Errorf("invalid RR header %q", name)
+			}
+		}
 		if !strings.HasPrefix(endpoint, "/_pool/rr/") || strings.ContainsAny(endpoint, "?#%") || !strings.HasPrefix(route.Path, "/") {
 			return c, fmt.Errorf("invalid round-robin endpoint %q", endpoint)
-		}
-		for k := range route.Headers {
-			if http.CanonicalHeaderKey(k) == "" || strings.ContainsAny(k, ": \t") {
-				return c, fmt.Errorf("invalid header name in route %q", endpoint)
-			}
 		}
 	}
 	return c, nil

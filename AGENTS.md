@@ -2,6 +2,10 @@
 
 - This is an independent application. Do not patch CPA or change Codex binaries,
   configuration, login state, environment variables, or tool availability.
+- User-requested exception: `pool-rr codex exec ...` and `pool-rr kb NAME ... codex ...` may
+  set invocation-only provider overrides and child-process pool environment
+  variables (including the client key) for explicit RR and Remote KB binding.
+  Never persist these changes to Codex config or change ordinary invocations.
 - Default native endpoints, including images and compaction, use weekly-reset
   fill-first and stop selecting accounts at configurable M percent remaining.
 - Only explicitly configured application-owned endpoints use round-robin and
@@ -11,6 +15,10 @@
   Do not add a native route allowlist or reject unfamiliar request fields.
 - Relay original bytes. Never regenerate request/response JSON, normalize tools,
   map models, filter unknown fields/events, or replay generation automatically.
+- User-requested exception: the two /_pool/rr/images endpoints accept only prompt
+  and images, and construct fixed Codex-compatible image requests. Native routes
+  and image response bytes remain unchanged. Review constants against the installed
+  Codex source when upgrading; do not silently follow changed upstream paths.
 - Keep content inspection small and read-only. Any added inspection must directly
   support account selection, continuity, or usage observation.
 - Explicit Remote KB sessions are the scoped exception: register immutable KB
