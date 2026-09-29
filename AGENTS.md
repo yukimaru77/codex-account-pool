@@ -13,6 +13,9 @@
 - Ordinary requests pass through with fill-first regardless of path, method,
   query, or payload schema. Only application-owned endpoints are exceptions.
   Do not add a native route allowlist or reject unfamiliar request fields.
+- Codex 0.156.1 compatibility: the Mac bridge leaves only the read-only
+  `GET /backend-api/wham/accounts/check` discovery on the original login so
+  Codex can match its selected workspace. Inference and usage still use the pool.
 - Relay original bytes. Never regenerate request/response JSON, normalize tools,
   map models, filter unknown fields/events, or replay generation automatically.
 - User-requested exception: the two /_pool/rr/images endpoints accept only prompt

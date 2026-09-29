@@ -217,6 +217,14 @@ SSE を使い、ツール後の続きを含め各推論 HTTP 要求でアカウ�
 WebSocket 接続単位の固定を避けるため、この provider は WebSocket を無効にする。
 生成の自動再送は無効。失敗時はエラーをそのまま返す。
 
+新しいCodexで `use_responses_lite` のモデルを使う場合、検索にはstandaloneの
+`alpha/search` が必要。サーバーの `pool.json` に下記検索ルートを追加して再起動し、
+接続確認してからMacの `bridge.json` で `"rr_standalone_web_search": true` にする。
+これにより、この実行のcustom providerに `supports_standalone_web_search=true` が渡る。
+`-c 'web_search="live"'` だけでは、custom providerの対応宣言がないため検索ツールは現れない。
+未展開サーバーで誤って有効化しないよう、この設定の既定値はfalse。
+通常のCodex設定やCodex Appには変更を加えない。
+
 `X-Pool-Account: <auth_index>` ヘッダーで、RR APIの使用アカウントを固定できる。
 値は管理API `GET /_pool/status` にある完全な `auth_index`（メールアドレスや短縮IDではない）。
 指定なしは従来のラウンドロビン。指定ありはそのアカウントだけを使い、通常RRの順番を進めない。
@@ -248,7 +256,8 @@ HTTP/SSEとWebSocketの接続専用ヘッダーは混用しない。Codex更新�
   "/_pool/rr/images/generations": {"upstream_path": "/backend-api/codex/images/generations"},
   "/_pool/rr/images/edits": {"upstream_path": "/backend-api/codex/images/edits"},
   "/_pool/rr/responses/compact": {"upstream_path": "/backend-api/codex/responses/compact"},
-  "/_pool/rr/responses": {"upstream_path": "/backend-api/codex/responses"}
+  "/_pool/rr/responses": {"upstream_path": "/backend-api/codex/responses"},
+  "/_pool/rr/alpha/search": {"upstream_path": "/backend-api/codex/alpha/search"}
 }
 ```
 

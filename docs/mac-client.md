@@ -168,7 +168,14 @@ bridge/.venv/bin/python bridge/run.py pool --config bridge.json \
 ```
 
 **実行中のCodexは作業を終えてから再起動する。** 起動前の接続はそのまま残る場合がある。
-ブリッジが動作している間、中継が有効になる。Mac起動時の自動起動は設定しない。
+ブリッジが動作している間、中継が有効になる。常時利用するMacではLaunchAgentの
+`RunAtLoad` と `KeepAlive` を使い、ターミナル終了後もブリッジを維持する。
+`ProgramArguments` には上記Python・スクリプト・設定・mitmdumpの絶対パスを指定する。
+このMacでは `~/Library/LaunchAgents/com.nonaka.codex-pool-bridge.plist` が管理する。
+
+Codex 0.156.1の起動時の本人確認 `GET /backend-api/wham/accounts/check` は、
+ローカルで選択したworkspaceとの照合が必要なため、元のログインで直接通信する。
+この読み取り専用の確認以外は従来どおり中継し、推論・画像生成・compaction・使用量照会は号池を使う。
 
 ### Codex Appは直接接続し、CLIだけ号池を使う
 

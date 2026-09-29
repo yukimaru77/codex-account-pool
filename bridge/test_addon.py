@@ -75,6 +75,31 @@ class BridgeTests(unittest.TestCase):
             bridge.requestheaders(flow)
             self.assertEqual(flow.request.get_state(), before)
 
+    def test_workspace_discovery_preserves_local_identity_and_response(self):
+        bridge = self.bridge()
+        flow = self.flow("/backend-api/wham/accounts/check?version=1")
+        flow.request.method = "GET"
+        before = flow.request.get_state()
+        bridge.requestheaders(flow)
+        self.assertEqual(flow.request.get_state(), before)
+        self.assertNotIn("pool_bridge_mode", flow.metadata)
+        flow.response = http.Response.make(200, b'{"accounts":[]}', {"Set-Cookie": "original=value"})
+        bridge.responseheaders(flow)
+        self.assertEqual(flow.response.headers["Set-Cookie"], "original=value")
+
+    def test_workspace_discovery_exception_is_exact_and_read_only(self):
+        bridge = self.bridge()
+        for method, path in (("POST", "/backend-api/wham/accounts/check"),
+                             ("GET", "/backend-api/wham/accounts/check/other"),
+                             ("GET", "/backend-api/wham/usage"),
+                             ("POST", "/backend-api/codex/responses")):
+            with self.subTest(method=method, path=path):
+                flow = self.flow(path)
+                flow.request.method = method
+                bridge.requestheaders(flow)
+                self.assertEqual(flow.request.host, "127.0.0.1")
+                self.assertEqual(flow.request.headers["Authorization"], "Bearer dedicated-client-key")
+
     def test_local_capture_uses_host_or_http2_authority_with_destination_ip(self):
         bridge = self.bridge()
         for version in (b"HTTP/1.1", b"HTTP/2.0"):

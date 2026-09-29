@@ -57,6 +57,13 @@ def command(config_path, argv):
         "request_max_retries": 0,
         "stream_max_retries": 0,
     }
+    standalone_search = config.get("rr_standalone_web_search", False)
+    if type(standalone_search) is not bool:
+        raise ValueError("rr_standalone_web_search must be a boolean")
+    if standalone_search:
+        # Enable only after deploying /_pool/rr/alpha/search on the server.
+        # Lite-model Codex hides hosted web_search and needs this capability.
+        provider["supports_standalone_web_search"] = True
     table = "{ " + ", ".join(k + " = " + json.dumps(v) for k, v in provider.items()) + " }"
     catalog = Path(config.get("rr_model_catalog", str(Path(os.environ.get("CODEX_HOME", Path.home() / ".codex")) / "models_cache.json"))).expanduser().resolve()
     if not catalog.is_file():

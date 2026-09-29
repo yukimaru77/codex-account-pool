@@ -86,6 +86,11 @@ class Bridge:
         # pretty_host reads HTTP Host / HTTP/2 :authority without altering it.
         if r.scheme != "https" or r.pretty_host.lower() != "chatgpt.com" or r.port != 443:
             return
+        # Codex 0.156.1 validates its locally selected workspace before inference.
+        # This identity-only discovery must use that login, not a pooled identity.
+        if r.method == "GET" and r.path.partition("?")[0] == "/backend-api/wham/accounts/check":
+            logging.info("pool bridge: direct workspace identity discovery")
+            return
         r.stream = True
         flow.metadata["pool_bridge_mode"] = self.mode
         # Log no query, body, headers, credentials, or resource IDs.

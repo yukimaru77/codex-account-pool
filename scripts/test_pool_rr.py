@@ -1,5 +1,6 @@
 import importlib.util
 import json
+import importlib.util
 import os
 from pathlib import Path
 import subprocess
@@ -13,6 +14,31 @@ SCRIPT = Path(__file__).with_name("pool-rr.py")
 
 
 class PoolRRTest(unittest.TestCase):
+    def test_standalone_search_capability_requires_explicit_deployed_route_opt_in(self):
+        spec = importlib.util.spec_from_file_location("pool_rr", SCRIPT)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "client.key").write_text("fixture-key")
+            (root / "models.json").write_text('{"models":[]}')
+            config = root / "bridge.json"
+            settings = {"origin": "http://127.0.0.1:18473", "key_file": "client.key",
+                        "rr_model_catalog": str(root / "models.json")}
+            for enabled in (None, False, True):
+                if enabled is not None:
+                    settings["rr_standalone_web_search"] = enabled
+                config.write_text(json.dumps(settings))
+                argv, env = module.command(config, ["codex", "exec", "--ignore-user-config", "-c", 'web_search="live"', "find a paper"])
+                provider = next(arg for arg in argv if arg.startswith("model_providers.pool_rr="))
+                self.assertEqual("supports_standalone_web_search = true" in provider, enabled is True)
+                self.assertIn('web_search="live"', argv)
+                self.assertNotIn("fixture-key", " ".join(argv))
+            settings["rr_standalone_web_search"] = "false"
+            config.write_text(json.dumps(settings))
+            with self.assertRaisesRegex(ValueError, "boolean"):
+                module.command(config, ["codex", "exec", "hello"])
+
     def test_invocation_preserves_arguments_stdin_exit_and_scopes_secret(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

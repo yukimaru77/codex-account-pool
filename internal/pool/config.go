@@ -66,6 +66,7 @@ func DefaultConfig() Config {
 		"/_pool/rr/images/edits":       {Path: "/backend-api/codex/images/edits"},
 		"/_pool/rr/responses/compact":  {Path: "/backend-api/codex/responses/compact"},
 		"/_pool/rr/responses":          {Path: "/backend-api/codex/responses"},
+		"/_pool/rr/alpha/search":       {Path: "/backend-api/codex/alpha/search"},
 	}}
 }
 
