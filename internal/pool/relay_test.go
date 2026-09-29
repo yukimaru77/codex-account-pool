@@ -675,3 +675,61 @@ func TestHTTP401QuotaHeadersDoNotClearAuthenticationFailure(t *testing.T) {
 		t.Fatal("401 quota headers made failed credentials selectable")
 	}
 }
+
+func routeHeaderFixture(t *testing.T) (*Handler, *http.Header) {
+	t.Helper()
+	h, _ := relayFixture(t, 50)
+	h.Config.RoundRobin = map[string]Route{"/_pool/rr/responses": {
+		Path:    "/backend-api/codex/responses",
+		Headers: map[string]string{"Originator": "kb-pool", "User-Agent": "pool-ua", "Chatgpt-Account-Id": "route-must-not-win"},
+	}}
+	seen := &http.Header{}
+	h.Transport = roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		*seen = r.Header.Clone()
+		_, _ = io.Copy(io.Discard, r.Body)
+		return &http.Response{StatusCode: 200, Header: make(http.Header), Body: io.NopCloser(strings.NewReader("ok"))}, nil
+	})
+	return h, seen
+}
+
+func TestRoundRobinRouteAddsConfiguredHeaders(t *testing.T) {
+	h, seen := routeHeaderFixture(t)
+	r := httptest.NewRequest("POST", "/_pool/rr/responses", strings.NewReader("{}"))
+	r.Header.Set("Authorization", "Bearer client-secret")
+	r.Header.Set("User-Agent", "client-ua")
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, r)
+	if w.Code != 200 {
+		t.Fatal(w.Code, w.Body.String())
+	}
+	if got := seen.Get("Originator"); got != "kb-pool" {
+		t.Fatalf("Originator = %q, want kb-pool", got)
+	}
+	if got := seen.Get("User-Agent"); got != "pool-ua" {
+		t.Fatalf("User-Agent = %q, want pool-ua", got)
+	}
+	if got := seen.Get("Chatgpt-Account-Id"); got != "account-0" {
+		t.Fatalf("identity header overridden by route header: %q", got)
+	}
+	if got := seen.Get("Authorization"); got == "" || got == "Bearer client-secret" {
+		t.Fatalf("Authorization not replaced with pooled token: %q", got)
+	}
+}
+
+func TestFillFirstRouteDoesNotAddRouteHeaders(t *testing.T) {
+	h, seen := routeHeaderFixture(t)
+	r := httptest.NewRequest("POST", "/backend-api/codex/responses", strings.NewReader("{}"))
+	r.Header.Set("Authorization", "Bearer client-secret")
+	r.Header.Set("User-Agent", "client-ua")
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, r)
+	if w.Code != 200 {
+		t.Fatal(w.Code, w.Body.String())
+	}
+	if got := seen.Get("Originator"); got != "" {
+		t.Fatalf("fill-first request received route header Originator=%q", got)
+	}
+	if got := seen.Get("User-Agent"); got != "client-ua" {
+		t.Fatalf("fill-first User-Agent = %q, want client-ua", got)
+	}
+}

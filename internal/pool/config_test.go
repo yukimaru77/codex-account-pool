@@ -28,3 +28,38 @@ func TestExplicitRoundRobinRoutesReplaceDefaults(t *testing.T) {
 		})
 	}
 }
+
+func TestRoundRobinRouteHeaders(t *testing.T) {
+	load := func(t *testing.T, body string) (Config, error) {
+		t.Helper()
+		path := filepath.Join(t.TempDir(), "pool.json")
+		if err := os.WriteFile(path, []byte(body), 0600); err != nil {
+			t.Fatal(err)
+		}
+		return LoadConfig(path)
+	}
+	t.Run("valid", func(t *testing.T) {
+		cfg, err := load(t, `{"round_robin_endpoints":{"/_pool/rr/responses":{"upstream_path":"/backend-api/codex/responses","headers":{"Originator":"kb-pool","User-Agent":"pool-ua"}}}}`)
+		if err != nil {
+			t.Fatal(err)
+		}
+		got := cfg.RoundRobin["/_pool/rr/responses"].Headers
+		if got["Originator"] != "kb-pool" || got["User-Agent"] != "pool-ua" || len(got) != 2 {
+			t.Fatalf("headers = %v", got)
+		}
+	})
+	for _, tc := range []struct{ name, key string }{
+		{"empty", ``},
+		{"colon", `Bad:Name`},
+		{"space", `Bad Name`},
+		{"tab", "Bad\\tName"},
+	} {
+		t.Run("rejects_"+tc.name, func(t *testing.T) {
+			_, err := load(t, `{"round_robin_endpoints":{"/_pool/rr/responses":{"upstream_path":"/backend-api/codex/responses","headers":{"`+tc.key+`":"v"}}}}`)
+			want := `invalid header name in route "/_pool/rr/responses"`
+			if err == nil || err.Error() != want {
+				t.Fatalf("err = %v, want %s", err, want)
+			}
+		})
+	}
+}

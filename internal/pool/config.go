@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -11,7 +12,8 @@ import (
 )
 
 type Route struct {
-	Path string `json:"upstream_path"`
+	Path    string            `json:"upstream_path"`
+	Headers map[string]string `json:"headers,omitempty"`
 }
 
 type Config struct {
@@ -71,6 +73,11 @@ func LoadConfig(path string) (Config, error) {
 	for endpoint, route := range c.RoundRobin {
 		if !strings.HasPrefix(endpoint, "/_pool/rr/") || strings.ContainsAny(endpoint, "?#%") || !strings.HasPrefix(route.Path, "/") {
 			return c, fmt.Errorf("invalid round-robin endpoint %q", endpoint)
+		}
+		for k := range route.Headers {
+			if http.CanonicalHeaderKey(k) == "" || strings.ContainsAny(k, ": \t") {
+				return c, fmt.Errorf("invalid header name in route %q", endpoint)
+			}
 		}
 	}
 	return c, nil

@@ -116,10 +116,12 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	path := r.URL.Path
 	rawPath := r.URL.RawPath
 	policy := FillFirst
+	var routeHeaders map[string]string
 	if route, ok := h.Config.RoundRobin[path]; ok {
 		path = route.Path
 		rawPath = ""
 		policy = RoundRobin
+		routeHeaders = route.Headers
 	}
 	if path == "/backend-api/codex/responses" && strings.EqualFold(r.Header.Get("Upgrade"), "websocket") {
 		// Like codex-lb's direct egress, negotiate plain frames so terminal
@@ -185,6 +187,10 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			pr.Out.URL.RawPath = rawPath
 			pr.Out.URL.RawQuery = pr.In.URL.RawQuery
 			stripIdentity(pr.Out.Header)
+			// Route headers go before identity headers so pooled credentials win.
+			for k, v := range routeHeaders {
+				pr.Out.Header.Set(k, v)
+			}
 			pr.Out.Header.Set("Authorization", "Bearer "+c.AccessToken)
 			pr.Out.Header.Set("Chatgpt-Account-Id", c.AccountID)
 			pr.Out.Trailer = pr.In.Trailer.Clone()
