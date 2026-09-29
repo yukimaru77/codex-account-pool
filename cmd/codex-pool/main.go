@@ -16,6 +16,7 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"slices"
 	"strings"
 	"syscall"
 	"time"
@@ -119,7 +120,8 @@ func run(args []string, out io.Writer) error {
 				return fmt.Errorf("codex_bin is not configured; set it or use --from PATH")
 			}
 			cmd := exec.CommandContext(ctx, cfg.CodexBin, "login")
-			cmd.Env = append(os.Environ(), "CODEX_HOME="+dir)
+			env := slices.DeleteFunc(os.Environ(), func(kv string) bool { return strings.HasPrefix(kv, "CODEX_HOME=") })
+			cmd.Env = withLaunchedMarker(append(env, "CODEX_HOME="+dir))
 			cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
 			return cmd.Run()
 		}

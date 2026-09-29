@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -27,6 +28,7 @@ func launchEnv(t *testing.T, accounts map[string]bool) (pool.Config, *pool.Codex
 	t.Helper()
 	// The test itself may run under a pooled Codex session.
 	t.Setenv("CODEX_HOME", "")
+	t.Setenv("CODEX_POOL_LAUNCHED", "")
 	env := newAccountEnv(t)
 	env.cfg.CodexBin = "/opt/codex/bin/codex"
 	for name, disabled := range accounts {
@@ -102,6 +104,9 @@ func TestLaunchSetsCodexHomeAndExecs(t *testing.T) {
 	}
 	if got := envValues(call.env, "CODEX_HOME"); !slices.Equal(got, []string{store.Path("alice")}) {
 		t.Fatalf("CODEX_HOME = %q", got)
+	}
+	if got := envValues(call.env, "CODEX_POOL_LAUNCHED"); !slices.Equal(got, []string{strconv.Itoa(os.Getpid())}) {
+		t.Fatalf("CODEX_POOL_LAUNCHED = %q", got)
 	}
 	if got := envValues(call.env, "LAUNCH_TEST_KEEP"); !slices.Equal(got, []string{"1"}) {
 		t.Fatalf("environment not inherited: %q", got)
@@ -195,7 +200,7 @@ func TestLaunchHelpBypassesSelection(t *testing.T) {
 		if !slices.Equal(call.args, append([]string{cfg.CodexBin}, args[1:]...)) {
 			t.Fatalf("args = %q", call.args)
 		}
-		if !slices.Equal(call.env, os.Environ()) || !slices.Equal(envValues(call.env, "CODEX_HOME"), []string{"/my/own/codex"}) {
+		if !slices.Equal(call.env, withLaunchedMarker(os.Environ())) || !slices.Equal(envValues(call.env, "CODEX_HOME"), []string{"/my/own/codex"}) {
 			t.Fatalf("env changed for %q", args)
 		}
 		if stderr.Len() != 0 {
@@ -379,5 +384,47 @@ func TestLaunchInheritedCodexHomeElsewherePassesThrough(t *testing.T) {
 	}
 	if stderr.Len() != 0 {
 		t.Fatalf("banner printed: %q", stderr.String())
+	}
+}
+
+func TestLaunchRefusesReentry(t *testing.T) {
+	t.Setenv("CODEX_POOL_ACCOUNT", "")
+	cfg, store, _ := launchEnv(t, map[string]bool{"alice": false})
+	// codex_bin reaching the wrapper execs launch again in the same process.
+	t.Setenv("CODEX_POOL_LAUNCHED", strconv.Itoa(os.Getpid()))
+	want := "launch re-entered itself; codex_bin points at the wrapper"
+	for _, args := range [][]string{{"--", "exec"}, {"--", "--version"}} {
+		var call execCall
+		var stderr bytes.Buffer
+		err := runLaunch(context.Background(), cfg, store, recordingDeps(noStatus, &call, &stderr), args)
+		if err == nil || err.Error() != want {
+			t.Fatalf("%q: err = %v", args, err)
+		}
+		if call.called {
+			t.Fatalf("%q: exec ran", args)
+		}
+	}
+	// A nested codex started by a pooled session is another process.
+	t.Setenv("CODEX_POOL_LAUNCHED", strconv.Itoa(os.Getpid()+1))
+	var call execCall
+	var stderr bytes.Buffer
+	if err := runLaunch(context.Background(), cfg, store, recordingDeps(noStatus, &call, &stderr), []string{"--", "exec"}); err != nil || !call.called {
+		t.Fatalf("nested launch: err=%v called=%v", err, call.called)
+	}
+	if got := envValues(call.env, "CODEX_POOL_LAUNCHED"); !slices.Equal(got, []string{strconv.Itoa(os.Getpid())}) {
+		t.Fatalf("CODEX_POOL_LAUNCHED = %q", got)
+	}
+}
+
+func TestLaunchPassThroughSetsLaunchedMarker(t *testing.T) {
+	cfg, store, _ := launchEnv(t, map[string]bool{"alice": false})
+	t.Setenv("CODEX_HOME", t.TempDir())
+	var call execCall
+	var stderr bytes.Buffer
+	if err := runLaunch(context.Background(), cfg, store, recordingDeps(noStatus, &call, &stderr), []string{"--", "exec"}); err != nil {
+		t.Fatal(err)
+	}
+	if got := envValues(call.env, "CODEX_POOL_LAUNCHED"); !slices.Equal(got, []string{strconv.Itoa(os.Getpid())}) {
+		t.Fatalf("CODEX_POOL_LAUNCHED = %q", got)
 	}
 }

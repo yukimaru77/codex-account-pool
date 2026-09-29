@@ -90,6 +90,7 @@ config の切替: `pool.json` に `accounts_dir` があれば `codexHomeStore`�
 5. 選択は scheduler の fill-first と同じ規則（reserve_percent 以下は除外、週次リセットが早い順、同率は名前順）。`--account` または環境変数 `CODEX_POOL_ACCOUNT` で固定できる。
 6. `CODEX_HOME=<dir>` を設定し、`codex_bin` を `syscall.Exec` する。stderr に 1 行 `codex-pool: account=<name> remaining=<n>%` を出す（`--quiet` で抑止）。
 7. 使えるアカウントが無ければ、残量が最も多いものを選んで警告を出す（起動を止めない）。
+8. 自己 exec 防止: exec する環境に `CODEX_POOL_LAUNCHED=<launch の PID>` を設定し（`account add`/`login` の `codex login` にも設定）、自分の環境の値が自分の PID と一致したら `launch re-entered itself; codex_bin points at the wrapper` で止める。exec は PID を保つので `codex_bin` がラッパーへ戻る経路は捕まり、セッション内の入れ子 `codex`（別プロセス）は止めない。
 
 ラッパースクリプト `~/.local/bin/codex`（インストーラが置く）:
 

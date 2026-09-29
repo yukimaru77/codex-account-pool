@@ -177,6 +177,10 @@ tail -f ~/.codex-pool/state/serve.log
 ```
 
 - **ラッパーを通らない:** `which -a codex` の先頭と、`alias codex` の有無を確認する。
+- **`launch re-entered itself; codex_bin points at the wrapper`:** `codex_bin` がラッパー自身に
+  戻っている。`pool.json` の `codex_bin` を本物のCodexに直す。
+  ラッパーは実行環境に `CODEX_POOL_LAUNCHED=<PID>` を設定し、同じPIDで再び起動されたら止まる。
+  セッション内から入れ子で起動した `codex` は別プロセスなので止まらない。
 - **`account list` の残量が空:** `serve` が動いているか、`serve.log` を確認する。
 - **アカウントが選ばれない:** 無効化・refresh失敗・予備残量以下のいずれかを `status` で確認する。
 - **symlinkが壊れた:** `account relink --all` で作り直す。

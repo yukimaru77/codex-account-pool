@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"slices"
 	"sort"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -60,6 +61,19 @@ func parseLaunchArgs(args []string) (launchOptions, error) {
 		o.codexArgs = fs.Args()
 	}
 	return o, nil
+}
+
+// launchedEnv marks an environment prepared by launch. Its value is the PID
+// that ran launch; exec keeps the PID, so seeing our own PID means codex_bin
+// execed back into launch, while a nested codex (another process) is fine.
+const launchedEnv = "CODEX_POOL_LAUNCHED"
+
+func launchedMarker() string { return launchedEnv + "=" + strconv.Itoa(os.Getpid()) }
+
+// withLaunchedMarker replaces any inherited marker with this process's.
+func withLaunchedMarker(env []string) []string {
+	env = slices.DeleteFunc(env, func(kv string) bool { return strings.HasPrefix(kv, launchedEnv+"=") })
+	return append(env, launchedMarker())
 }
 
 // codexValueFlags are Codex's top-level flags that take a separate value,
@@ -137,6 +151,11 @@ func helpOnly(args []string) bool {
 // runLaunch picks the account directory with the most usable weekly quota
 // (fill-first), sets CODEX_HOME to it and execs the real Codex binary.
 func runLaunch(ctx context.Context, cfg pool.Config, store *pool.CodexHomeStore, deps launchDeps, args []string) error {
+	if os.Getenv(launchedEnv) == strconv.Itoa(os.Getpid()) {
+		// syscall.Exec and the wrapper's exec keep the PID, so this process
+		// already ran launch once: codex_bin leads back here.
+		return errors.New("launch re-entered itself; codex_bin points at the wrapper")
+	}
 	o, err := parseLaunchArgs(args)
 	if err != nil {
 		return err
@@ -152,10 +171,10 @@ func runLaunch(ctx context.Context, cfg pool.Config, store *pool.CodexHomeStore,
 	inherited, fromHome := inheritedAccount(os.Getenv("CODEX_HOME"), store.Dir)
 	if os.Getenv("CODEX_HOME") != "" && !fromHome {
 		// The caller chose its own Codex home outside the pool.
-		return deps.exec(cfg.CodexBin, argv, os.Environ())
+		return deps.exec(cfg.CodexBin, argv, withLaunchedMarker(os.Environ()))
 	}
 	if helpOnly(o.codexArgs) {
-		return deps.exec(cfg.CodexBin, argv, os.Environ())
+		return deps.exec(cfg.CodexBin, argv, withLaunchedMarker(os.Environ()))
 	}
 	stderr := deps.stderr
 	if stderr == nil {
@@ -224,7 +243,7 @@ func runLaunch(ctx context.Context, cfg pool.Config, store *pool.CodexHomeStore,
 
 	dir := store.Path(chosen)
 	env := slices.DeleteFunc(os.Environ(), func(kv string) bool { return strings.HasPrefix(kv, "CODEX_HOME=") })
-	env = append(env, "CODEX_HOME="+dir)
+	env = withLaunchedMarker(append(env, "CODEX_HOME="+dir))
 	if !o.quiet {
 		fmt.Fprintf(stderr, "codex-pool: account=%s remaining=%s%%\n", chosen, remainingOf(statuses, chosen))
 	}
