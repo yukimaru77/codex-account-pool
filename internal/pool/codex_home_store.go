@@ -300,7 +300,7 @@ func ReadCodexAuthFile(path string) (Credential, error) {
 }
 
 // SharedExclude lists the Codex home entries that stay per account.
-var SharedExclude = map[string]bool{"auth.json": true, "models_cache.json": true, "log": true, "tmp": true}
+var SharedExclude = map[string]bool{"auth.json": true, "models_cache.json": true, "log": true, "tmp": true, "app-server-control": true}
 
 // LinkShared symlinks every top-level entry of codexHome (except SharedExclude
 // and names starting with ".write-") into dir, replacing existing symlinks,
