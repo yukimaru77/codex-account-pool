@@ -40,12 +40,12 @@ func TestRoundRobinRouteHeaders(t *testing.T) {
 		return LoadConfig(path)
 	}
 	t.Run("valid", func(t *testing.T) {
-		cfg, err := load(t, `{"round_robin_endpoints":{"/_pool/rr/responses":{"upstream_path":"/backend-api/codex/responses","headers":{"Originator":"kb-pool","User-Agent":"pool-ua"}}}}`)
+		cfg, err := load(t, `{"round_robin_endpoints":{"/_pool/rr/responses":{"upstream_path":"/backend-api/codex/responses","headers":{"Originator":"rr-client","User-Agent":"pool-ua"}}}}`)
 		if err != nil {
 			t.Fatal(err)
 		}
 		got := cfg.RoundRobin["/_pool/rr/responses"].Headers
-		if got["Originator"] != "kb-pool" || got["User-Agent"] != "pool-ua" || len(got) != 2 {
+		if got["Originator"] != "rr-client" || got["User-Agent"] != "pool-ua" || len(got) != 2 {
 			t.Fatalf("headers = %v", got)
 		}
 	})
