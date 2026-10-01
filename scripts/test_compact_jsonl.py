@@ -11,6 +11,7 @@ import tempfile
 import threading
 from types import SimpleNamespace
 import unittest
+import unittest.mock
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 
@@ -67,7 +68,8 @@ class PreparedJSONLTests(unittest.TestCase):
             with self.subTest(data=data), self.assertRaises(ValueError):
                 compact.compaction_item(io.BytesIO(data))
 
-    def run_command(self, response=SUCCESS, status=200, stdin=False, same_output=False, invalid=False, shared=False):
+    def run_command(self, response=SUCCESS, status=200, stdin=False, same_output=False, invalid=False, shared=False,
+                    legacy=False):
         requests = []
 
         class Handler(BaseHTTPRequestHandler):
@@ -109,8 +111,9 @@ class PreparedJSONLTests(unittest.TestCase):
                            "--model", "test-model", "--output", str(output)]
                 origin = f"http://127.0.0.1:{server.server_port}"
                 if shared:
-                    config = root / "bridge.json"
-                    config.write_text(json.dumps({"origin": origin, "key_file": "client.key"}))
+                    config = root / "rr.json"
+                    settings = {"origin": origin} if legacy else {"base_url": origin + "/_pool/rr"}
+                    config.write_text(json.dumps(dict(settings, key_file="client.key")))
                     command += ["--pool-config", str(config)]
                 else:
                     command += ["--origin", origin, "--key-file", str(key)]
@@ -140,13 +143,33 @@ class PreparedJSONLTests(unittest.TestCase):
 
     def test_success_file(self): self.run_command()
     def test_success_stdin(self): self.run_command(stdin=True)
-    def test_shared_config_sends_to_its_origin_with_its_key(self): self.run_command(shared=True)
+    def test_shared_config_sends_to_its_base_url_with_its_key(self): self.run_command(shared=True)
+    def test_legacy_config_origin_is_accepted(self): self.run_command(shared=True, legacy=True)
     def test_input_output_same_file_is_untouched(self): self.run_command(same_output=True)
     def test_invalid_input_does_not_send(self): self.run_command(invalid=True)
     def test_no_blob_does_not_replace_output(self): self.run_command(response=event("response.completed"))
     def test_truncated_stream_does_not_replace_output(self): self.run_command(response=event("response.output_item.done", item=ITEM))
     def test_http_error_is_not_retried(self): self.run_command(status=429, response=b'private-test-key')
     def test_redirect_is_not_followed(self): self.run_command(status=307)
+
+
+    def test_default_config_prefers_rr_json_over_legacy_kb_pool_json(self):
+        with tempfile.TemporaryDirectory() as directory:
+            home = Path(directory)
+            with unittest.mock.patch.object(Path, "home", return_value=home):
+                self.assertEqual(compact.default_config(), home / ".codex-pool/rr.json")
+                (home / ".codex-pool").mkdir()
+                (home / ".codex-pool/kb-pool.json").write_text("{}")
+                self.assertEqual(compact.default_config(), home / ".codex-pool/kb-pool.json")
+                (home / ".codex-pool/rr.json").write_text("{}")
+                self.assertEqual(compact.default_config(), home / ".codex-pool/rr.json")
+
+    def test_base_url_must_name_the_rr_routes(self):
+        self.assertEqual(compact.config_origin({"base_url": "http://127.0.0.1:1/_pool/rr/"}), "http://127.0.0.1:1")
+        self.assertEqual(compact.config_origin({"origin": "http://127.0.0.1:1"}), "http://127.0.0.1:1")
+        for base in ("http://127.0.0.1:1", "http://127.0.0.1:1/v1", 7):
+            with self.subTest(base=base), self.assertRaises(ValueError):
+                compact.config_origin({"base_url": base})
 
 
 if __name__ == "__main__":

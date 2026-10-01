@@ -13,10 +13,11 @@ ROOT = Path(__file__).resolve().parent.parent
 
 
 def default_config():
-    """The local pool's kb-pool.json when installed."""
-    local = Path.home() / ".codex-pool/kb-pool.json"
-    if local.is_file():
-        return local
+    """The local pool's rr.json (or legacy kb-pool.json) when installed."""
+    for name in ("rr.json", "kb-pool.json"):
+        local = Path.home() / ".codex-pool" / name
+        if local.is_file():
+            return local
     raise ValueError("local pool config not found; run scripts/install-local.sh")
 
 
@@ -28,7 +29,10 @@ def command(config_path, argv):
     spec = importlib.util.spec_from_file_location("compact_jsonl", ROOT / "scripts/compact-jsonl.py")
     compact = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(compact)
-    base = compact.endpoint(config["origin"]).removesuffix("/responses")
+    origin = compact.config_origin(config)
+    if not origin:
+        raise ValueError("pool config needs base_url")
+    base = compact.endpoint(origin).removesuffix("/responses")
     state = Path(config.get("state_dir", "state")).expanduser()
     if not state.is_absolute():
         state = config_path.parent / state
@@ -71,7 +75,7 @@ def command(config_path, argv):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--config", default=None,
-                        help="pool config (default: ~/.codex-pool/kb-pool.json if present, else repository local pool config)")
+                        help="pool config (default: ~/.codex-pool/rr.json, or legacy kb-pool.json)")
     parser.add_argument("command", nargs=argparse.REMAINDER, help="codex exec ...")
     options = parser.parse_args()
     argv = options.command

@@ -185,22 +185,39 @@ json_string() {
 	printf '"%s"' "$(printf '%s' "$1" | sed 's/[\\"]/\\&/g')"
 }
 
-# 3b. kb-pool.json for kb-repomap --pool-config and pool-rr. Never overwritten.
+# json_field FILE KEY: KEY's string value in the flat JSON object FILE.
+json_field() {
+	sed -n 's/.*"'"$2"'": *"\([^"]*\)".*/\1/p' "$1" | head -n 1
+}
+
+# 3b. rr.json: the round-robin base URL and client key for pool-rr and other
+# RR clients. Never overwritten; a legacy kb-pool.json is carried over.
 listen=$(sed -n 's/^ *"listen": *"\(.*\)",\{0,1\} *$/\1/p' "$CONFIG")
 listen=${listen:-127.0.0.1:18473}
 case $listen in
 :* | 0.0.0.0:*) listen=127.0.0.1:${listen##*:} ;;
 esac
-ORIGIN=http://$listen
-KB_POOL=$POOL_HOME/kb-pool.json
-if [ -e "$KB_POOL" ]; then
-	echo "keeping existing $KB_POOL"
+RR_BASE=http://$listen/_pool/rr
+RR_KEY=$STATE/client.key
+RR_CONFIG=$POOL_HOME/rr.json
+LEGACY_RR_CONFIG=$POOL_HOME/kb-pool.json
+if [ -e "$RR_CONFIG" ]; then
+	echo "keeping existing $RR_CONFIG"
+	RR_BASE=$(json_field "$RR_CONFIG" base_url)
+	RR_KEY=$(json_field "$RR_CONFIG" key_file)
 else
-	printf '{"origin": %s, "key_file": %s}\n' "$(json_string "$ORIGIN")" \
-		"$(json_string "$STATE/client.key")" >"$KB_POOL.tmp.$$"
-	chmod 0600 "$KB_POOL.tmp.$$"
-	mv -f "$KB_POOL.tmp.$$" "$KB_POOL"
-	echo "wrote $KB_POOL"
+	if [ -e "$LEGACY_RR_CONFIG" ]; then
+		legacy_origin=$(json_field "$LEGACY_RR_CONFIG" origin)
+		legacy_key=$(json_field "$LEGACY_RR_CONFIG" key_file)
+		[ -n "$legacy_origin" ] && RR_BASE=${legacy_origin%/}/_pool/rr
+		[ -n "$legacy_key" ] && RR_KEY=$legacy_key
+		echo "install-local: notice: created $RR_CONFIG from legacy $LEGACY_RR_CONFIG (left in place; remove it when no client reads it)"
+	fi
+	printf '{"base_url": %s, "key_file": %s}\n' "$(json_string "$RR_BASE")" \
+		"$(json_string "$RR_KEY")" >"$RR_CONFIG.tmp.$$"
+	chmod 0600 "$RR_CONFIG.tmp.$$"
+	mv -f "$RR_CONFIG.tmp.$$" "$RR_CONFIG"
+	echo "wrote $RR_CONFIG"
 fi
 
 # 4. codex wrapper. Anything else at $WRAPPER is kept as codex.pre-pool-<date>.
@@ -222,13 +239,13 @@ fi
 mv -f "$tmp_wrapper" "$WRAPPER"
 echo "installed wrapper $WRAPPER"
 
-# 4b. pool-rr wrapper on the local kb-pool.json. Anything else at $RR_WRAPPER
+# 4b. pool-rr wrapper on the local rr.json. Anything else at $RR_WRAPPER
 # (e.g. a link to scripts/pool-rr.py) is kept as pool-rr.pre-pool-<date>.
 tmp_rr=$RR_WRAPPER.tmp.$$
 cat >"$tmp_rr" <<RRWRAPPER
 #!/bin/sh
 # codex-pool pool-rr: round-robin codex exec on the local pool.
-exec python3 "$REPO/scripts/pool-rr.py" --config "$KB_POOL" "\$@"
+exec python3 "$REPO/scripts/pool-rr.py" --config "$RR_CONFIG" "\$@"
 RRWRAPPER
 chmod 0755 "$tmp_rr"
 if { [ -e "$RR_WRAPPER" ] || [ -L "$RR_WRAPPER" ]; } &&
@@ -305,11 +322,9 @@ Next steps:
   "$POOL_BIN" account list --config "$CONFIG"
   "$RR_WRAPPER" codex exec "..."               # round-robin one exec
 
-For kb-repomap (add to your shell profile):
-  export KB_POOL_ORIGIN=$ORIGIN
-  export KB_POOL_KEY_FILE="$STATE/client.key"
-For kb create, add to build_args in ~/.config/kb/config.json:
-  "--pool-config", "$KB_POOL"
+Round-robin endpoints (also in $RR_CONFIG):
+  base URL: ${RR_BASE:-(unset)}
+  key file: ${RR_KEY:-(unset)}
 
 Service log: $LOG
 EOF

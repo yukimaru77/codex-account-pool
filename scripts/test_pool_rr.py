@@ -73,7 +73,7 @@ class PoolRRTest(unittest.TestCase):
             self.assertEqual(os.environ.get("CODEX_POOL_RR_KEY"), before)
             self.assertEqual(json.loads(config.read_text())["origin"], "http://127.0.0.1:18473")
 
-    def test_default_config_prefers_local_kb_pool_json(self):
+    def test_default_config_prefers_rr_json_over_legacy_kb_pool_json(self):
         spec = importlib.util.spec_from_file_location("pool_rr", SCRIPT)
         pool_rr = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(pool_rr)
@@ -81,19 +81,22 @@ class PoolRRTest(unittest.TestCase):
             home = Path(directory)
             with mock.patch.dict(os.environ, {"HOME": str(home)}):
                 self.assertRaises(ValueError, pool_rr.default_config)
-                local = home / ".codex-pool/kb-pool.json"
-                local.parent.mkdir()
+                (home / ".codex-pool").mkdir()
+                legacy = home / ".codex-pool/kb-pool.json"
+                legacy.write_text("{}")
+                self.assertEqual(pool_rr.default_config(), legacy)
+                local = home / ".codex-pool/rr.json"
                 local.write_text("{}")
                 self.assertEqual(pool_rr.default_config(), local)
 
-    def test_runs_with_local_kb_pool_json_by_default(self):
+    def run_default(self, name, settings):
         with tempfile.TemporaryDirectory() as directory:
             home = Path(directory)
             state = home / ".codex-pool/state"
             state.mkdir(parents=True)
             (state / "client.key").write_text("test-client-secret\n")
-            (home / ".codex-pool/kb-pool.json").write_text(json.dumps(
-                {"origin": "http://127.0.0.1:18999", "key_file": str(state / "client.key")}))
+            (home / ".codex-pool" / name).write_text(json.dumps(
+                dict(settings, key_file=str(state / "client.key"))))
             (home / ".codex").mkdir()
             (home / ".codex/models_cache.json").write_text('{"models":[]}')
             codex = home / "codex"
@@ -101,10 +104,28 @@ class PoolRRTest(unittest.TestCase):
             codex.chmod(0o755)
             env = dict(os.environ, HOME=str(home), PATH=str(home) + os.pathsep + os.environ["PATH"])
             env.pop("CODEX_HOME", None)
-            result = subprocess.run([sys.executable, str(SCRIPT), "codex", "exec", "hi"],
-                                    capture_output=True, text=True, env=env)
-            self.assertEqual(result.returncode, 0, result.stderr)
-            self.assertIn('"http://127.0.0.1:18999/_pool/rr"', json.loads(result.stdout)[4])
+            return subprocess.run([sys.executable, str(SCRIPT), "codex", "exec", "hi"],
+                                  capture_output=True, text=True, env=env)
+
+    def test_runs_with_local_rr_json_by_default(self):
+        for base in ("http://127.0.0.1:18999/_pool/rr", "http://127.0.0.1:18999/_pool/rr/"):
+            with self.subTest(base=base):
+                result = self.run_default("rr.json", {"base_url": base})
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertIn('"http://127.0.0.1:18999/_pool/rr"', json.loads(result.stdout)[4])
+
+    def test_runs_with_legacy_kb_pool_json_origin(self):
+        result = self.run_default("kb-pool.json", {"origin": "http://127.0.0.1:18998"})
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn('"http://127.0.0.1:18998/_pool/rr"', json.loads(result.stdout)[4])
+
+    def test_rejects_base_url_outside_rr_routes(self):
+        for settings in ({"base_url": "http://127.0.0.1:18999"}, {"base_url": "http://127.0.0.1:18999/v1"},
+                         {"base_url": "http://pool.example:18999/_pool/rr"}, {}):
+            with self.subTest(settings=settings):
+                result = self.run_default("rr.json", settings)
+                self.assertEqual(result.returncode, 1)
+                self.assertNotIn("test-client-secret", result.stdout + result.stderr)
 
     def test_rejects_commands_outside_supported_invocations(self):
         for argv in ([], ["codex"], ["other", "codex"], ["other", "exec"], ["codex", "login"]):

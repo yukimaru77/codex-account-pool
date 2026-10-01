@@ -86,40 +86,71 @@ class InstallLocalTests(unittest.TestCase):
         self.assertTrue((self.pool_home / "state" / "client.key").is_file())
         self.assertTrue((self.home / ".codex-accounts").is_dir())
         self.assertEqual(self.backups(), [])
-        self.assertIn("KB_POOL_ORIGIN=http://127.0.0.1:18473", result.stdout)
-        self.assertIn(f'KB_POOL_KEY_FILE="{self.pool_home}/state/client.key"', result.stdout)
+        self.assertIn("base URL: http://127.0.0.1:18473/_pool/rr", result.stdout)
+        self.assertIn(f"key file: {self.pool_home}/state/client.key", result.stdout)
+        self.assertNotIn("KB_", result.stdout)
+        self.assertNotIn("kb-pool.json", result.stdout)
+        self.assertNotIn("/kb/", result.stdout)
+        self.assertFalse((self.pool_home / "kb-pool.json").exists())
         self.assertIn(f'"{self.prefix}/codex-pool" account add main --from', result.stdout)
         self.assertIn("account add main --from", result.stdout)
         self.assertFalse((self.home / "Library").exists())
         self.assertFalse((self.home / ".config").exists())
 
-    def test_kb_pool_config_is_written_once(self):
+    def test_rr_config_is_written_once(self):
         result = self.run_script()
-        kb_pool = self.pool_home / "kb-pool.json"
-        self.assertEqual(json.loads(kb_pool.read_text()), {
-            "origin": "http://127.0.0.1:18473",
+        rr = self.pool_home / "rr.json"
+        self.assertEqual(json.loads(rr.read_text()), {
+            "base_url": "http://127.0.0.1:18473/_pool/rr",
             "key_file": str(self.pool_home / "state" / "client.key"),
         })
-        self.assertIn(str(kb_pool), result.stdout)
-        self.assertIn("--pool-config", result.stdout)
-        self.assertIn("config.json", result.stdout)
-        before = kb_pool.read_bytes()
+        self.assertEqual(stat.S_IMODE(rr.stat().st_mode), 0o600)
+        self.assertIn(str(rr), result.stdout)
+        before = rr.read_bytes()
         again = self.run_script()
-        self.assertEqual(kb_pool.read_bytes(), before)
-        custom = b'{"origin": "http://pool.example:1", "key_file": "/x"}\n'
-        kb_pool.write_bytes(custom)
-        self.run_script()
-        self.assertEqual(kb_pool.read_bytes(), custom)
-        self.assertIn(str(kb_pool), again.stdout)
+        self.assertEqual(rr.read_bytes(), before)
+        self.assertIn(f"keeping existing {rr}", again.stdout)
+        custom = b'{"base_url": "http://127.0.0.1:1/_pool/rr", "key_file": "/x"}\n'
+        rr.write_bytes(custom)
+        kept = self.run_script()
+        self.assertEqual(rr.read_bytes(), custom)
+        self.assertIn("base URL: http://127.0.0.1:1/_pool/rr", kept.stdout)
+        self.assertIn("key file: /x", kept.stdout)
 
-    def test_pool_rr_wrapper_uses_local_kb_pool_config(self):
+    def test_rr_config_follows_listen(self):
+        self.run_script()
+        cfg = self.config()
+        cfg["listen"] = ":18999"
+        (self.pool_home / "pool.json").write_text(json.dumps(cfg, indent=2) + "\n")
+        (self.pool_home / "rr.json").unlink()
+        self.run_script()
+        self.assertEqual(json.loads((self.pool_home / "rr.json").read_text())["base_url"],
+                         "http://127.0.0.1:18999/_pool/rr")
+
+    def test_legacy_kb_pool_config_is_carried_over_and_kept(self):
+        self.pool_home.mkdir()
+        legacy = self.pool_home / "kb-pool.json"
+        content = b'{"origin": "http://127.0.0.1:18555/", "key_file": "/legacy/client.key"}\n'
+        legacy.write_bytes(content)
+        result = self.run_script()
+        self.assertEqual(json.loads((self.pool_home / "rr.json").read_text()), {
+            "base_url": "http://127.0.0.1:18555/_pool/rr",
+            "key_file": "/legacy/client.key",
+        })
+        self.assertEqual(legacy.read_bytes(), content)
+        notices = [line for line in (result.stdout + result.stderr).splitlines() if "kb-pool.json" in line]
+        self.assertEqual(len(notices), 1, notices)
+        again = self.run_script()
+        self.assertNotIn("kb-pool.json", again.stdout + again.stderr)
+
+    def test_pool_rr_wrapper_uses_local_rr_config(self):
         self.run_script()
         wrapper = self.prefix / "pool-rr"
         self.assertEqual(stat.S_IMODE(wrapper.stat().st_mode), 0o755)
         text = wrapper.read_text()
         self.assertTrue(text.startswith("#!/bin/sh\n"))
         self.assertIn(f'"{REPO}/scripts/pool-rr.py"', text)
-        self.assertIn(f'--config "{self.pool_home}/kb-pool.json"', text)
+        self.assertIn(f'--config "{self.pool_home}/rr.json"', text)
         self.assertIn('"$@"', text)
         self.run_script()
         self.assertEqual(wrapper.read_text(), text)
