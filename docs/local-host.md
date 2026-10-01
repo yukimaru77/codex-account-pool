@@ -4,7 +4,7 @@
 各アカウントは素の Codex で正規にログインした `auth.json` をそのまま使い、
 対話セッションはそのアカウント本人として直接通信する。
 プール（`codex-pool serve`）はPCごとに1つ、`127.0.0.1:18473` で動かし、
-残量監視・`/_pool/rr/*` のround-robin・`kb-repomap` のKB注入を担当する。
+残量監視と `/_pool/rr/*` のround-robinを担当する。
 PC間でアカウントや残量は共有しない。
 
 Macの透過ブリッジ（mitmdump・専用CA）は使わない。
@@ -25,7 +25,7 @@ scripts/install-local.sh
 | オプション | 既定値 | 内容 |
 | --- | --- | --- |
 | `--prefix` | `~/.local/bin` | `codex-pool` とラッパー `codex`・`pool-rr` の置き場所 |
-| `--pool-home` | `~/.codex-pool` | `pool.json`・`kb-pool.json` と `state/` |
+| `--pool-home` | `~/.codex-pool` | `pool.json`・`rr.json` と `state/` |
 | `--accounts-dir` | `~/.codex-accounts` | アカウントごとの `CODEX_HOME` |
 | `--codex-bin` | PATH上の `codex` | ラッパーが最終的に実行する本物のCodex |
 
@@ -34,13 +34,14 @@ scripts/install-local.sh
 1. `go build` で `codex-pool` を `--prefix` に置く。
 2. `pool.json` が無ければ `codex-pool init` で作る。既にあれば一切変更しない。
    `round_robin_endpoints` は書かず、組み込みの既定入口を使う。
-3. `kb-pool.json` が無ければ作る。内容は `origin`（`pool.json` の `listen`）と
+3. `rr.json` が無ければ作る。内容は `base_url`（`pool.json` の `listen` に `/_pool/rr` を付けたもの）と
    `key_file`（`state/client.key` の絶対パス）の2項目だけ。既にあれば変更しない。
-   `kb-repomap` の `--pool-config`、`pool-rr`、`scripts/compact-jsonl.py` が読む。
+   旧版の `kb-pool.json` だけがある場合は、その値から `rr.json` を作り、`kb-pool.json` は残す。
+   `pool-rr`、`scripts/compact-jsonl.py` などのRRクライアントが読む。
 4. ラッパー `--prefix/codex` を置く。同名の別ファイルがあれば
    `codex.pre-pool-日付` へ退避する。ラッパー自身は退避しない。
 5. ラッパー `--prefix/pool-rr` を置く。中身はこのリポジトリの `scripts/pool-rr.py` を
-   `--config ~/.codex-pool/kb-pool.json` 付きで実行するだけなので、リポジトリは移動・削除しない。
+   `--config ~/.codex-pool/rr.json` 付きで実行するだけなので、リポジトリは移動・削除しない。
    同名の別ファイル（`scripts/pool-rr.py` へのsymlink等）は `pool-rr.pre-pool-日付` へ退避する。
 6. 常駐を登録する。macOSは `~/Library/LaunchAgents/com.local.codex-pool.plist`、
    Linuxは `~/.config/systemd/user/codex-pool.service`。
@@ -141,44 +142,28 @@ Codex は auth.json をその場で上書きする（原子的ではない）。
 CODEX_POOL_ACCOUNT=sub1 codex
 ```
 
-`kb NAME codex ...` も最終的に `codex` を実行するため、同じ選択を通る。
+## 4. round-robin入口（RR）
 
-## 4. kb-repomapからの利用
-
-シェルの設定ファイルに追加する。インストーラの最後にも表示される。
-
-```bash
-export KB_POOL_ORIGIN=http://127.0.0.1:18473
-export KB_POOL_KEY_FILE="$HOME/.codex-pool/state/client.key"
-```
-
-`kb create` の圧縮には `~/.config/kb/config.json` の `build_args` で
-インストーラが作った `kb-pool.json` を指定する。既存の `stores` は残す。
-`~` は展開されるが、インストーラの表示どおり絶対パスで書いてもよい。
+`/_pool/rr/*` は要求ごとにアカウントを巡回する入口で、`client.key` のBearer認証が要る。
+接続先とキーはインストーラが作る `~/.codex-pool/rr.json` にある。
 
 ```json
-{
-  "stores": [],
-  "build_args": ["--pool-config", "~/.codex-pool/kb-pool.json", "--workers", "12"]
-}
+{"base_url": "http://127.0.0.1:18473/_pool/rr", "key_file": "/Users/me/.codex-pool/state/client.key"}
 ```
 
-`kb create` の圧縮や画像生成は `/_pool/rr/*` のround-robin入口、
-`kb NAME --remote codex` はプールへ直接つなぐKB注入セッションになる。
-どちらもループバックなので `private_http` は不要。
+kb-repomap などのRRクライアントは、RRのbase URLを `http://127.0.0.1:18473/_pool/rr` に向けて使える。
+号池はRRクライアントを起動・設定しない。
 
 ### pool-rr で1回の実行だけround-robinにする
 
 ```bash
 pool-rr codex exec "このリポジトリを調べて"
-pool-rr kb paper-demo --remote codex exec "この論文の要点を説明して"
-pool-rr kb paper-demo --remote codex        # TUI
 ```
 
-`pool-rr` は `kb-pool.json` の接続先と `client.key` を使い、その実行の Codex だけ
+`pool-rr` は `rr.json` の `base_url` と `key_file` を使い、その実行の Codex だけ
 provider を `/_pool/rr` に向ける。各推論要求ごとにアカウントを巡回する。
-`scripts/pool-rr.py` を直接実行した場合も、`~/.codex-pool/kb-pool.json` があれば
-それを既定の設定として使う。インストール前に設定が無ければエラーになります。
+`scripts/pool-rr.py` を直接実行した場合も、`~/.codex-pool/rr.json`（無ければ旧版の `kb-pool.json`）を
+既定の設定として使う。インストール前に設定が無ければエラーになります。
 
 `pool-rr` はPATH上の `codex` を実行するため、ラッパー経由になる。
 このためラッパーの `codex-pool: account=名前 remaining=残量%` は表示されるが、
@@ -240,21 +225,6 @@ model・quality・size・background・n などは号池が固定する（`gpt-im
 
 値は実機のCodexの通信で観測したものを使う（上の値は例）。認証ヘッダーは書かない。
 
-### kb decrypt の消費
-
-`kb decrypt NAME` はblobの数をNとすると、各波で high と max を N 本ずつ、
-合計 2N 本を並列に投げる。波は最大4回（1blobあたり最大8回）。
-全てプールのアカウントの週の利用枠を使うため、blobが多いKBでは消費が大きい。
-実行前に `account list` で残量を確認する。
-
-### Claude Code から使う
-
-`kb NAME claude` は復号済みの平文（`dev.txt` と選択済みの `raw.txt`）を
-システムプロンプトとして渡し、ローカルのClaude Codeセッションを起動する。
-号池は使わない。先に `kb decrypt NAME` が必要。
-`--remote` はCodex専用で、Claude Codeでは使えない。
-号池はOpenAI向けの通信にしかKBを注入できず、Anthropicの通信には介在できないため。
-
 ## 5. トラブルシューティング
 
 ```bash
@@ -287,5 +257,5 @@ systemctl --user start codex-pool
 
 Codex App（Codex.app・ChatGPT.app）はラッパーを通らず、providerも変更できない。
 このため、Appは自分でログインした1アカウントだけで動き、
-fill-firstの選択・残量による切替・KB注入の対象外になる。
+fill-firstの選択・残量による切替の対象外になる。
 ブリッジ構成でAppの通信を横取りしていた場合、移行後はその機能が無くなる。

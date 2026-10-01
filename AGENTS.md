@@ -2,9 +2,10 @@
 
 - This is an independent application. Do not patch CPA or change Codex binaries,
   configuration, login state, environment variables, or tool availability.
-- `pool-rr codex exec ...` and `pool-rr kb NAME ... codex ...` may set invocation-only
-  provider overrides and child-process pool environment variables for local RR and KB binding.
-  Never persist these changes to Codex config.
+- `pool-rr codex exec ...` may set invocation-only provider overrides and the RR client key
+  for local RR. Never persist these changes to Codex config.
+- The pool is independent of kb-repomap and other RR clients: never launch them, set their
+  environment variables, or write files named after them. RR clients read `~/.codex-pool/rr.json`.
 - Default native endpoints, including images and compaction, use weekly-reset
   fill-first and stop selecting accounts at configurable M percent remaining.
 - Only explicitly configured application-owned endpoints use round-robin and
@@ -20,9 +21,6 @@
   Codex source when upgrading; do not silently follow changed upstream paths.
 - Keep content inspection small and read-only. Any added inspection must directly
   support account selection, continuity, or usage observation.
-- Explicit local KB sessions may register immutable KB items, inherit the binding for children,
-  and insert them into inference input before conversation/compaction history. Exclude them from compaction requests.
-  Preserve other JSON fields and response bytes; keep unregistered relay intact.
 - Reuse the narrow CPA OAuth/quota code under internal/cpa. Preserve MIT notice,
   pin the source commit, and document adaptations in third_party/cpa.
 - Never log credentials or arbitrary OAuth error response bodies.

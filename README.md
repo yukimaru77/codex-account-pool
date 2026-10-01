@@ -34,18 +34,21 @@ codex-pool status --config ~/.codex-pool/pool.json
 `codex` ラッパーは週の残量とリセット時刻でアカウントを選び、選択した `CODEX_HOME` で本物のCodexを起動します。
 通常のCodex設定やログイン状態を共有上書きしません。
 
-## KB / round-robin
+## round-robin
 
-インストーラが作る `~/.codex-pool/kb-pool.json` を `kb-repomap` の `--pool-config` に指定します。
-`kb-repomap` は `http://127.0.0.1:18473/_pool/rr` を使います。
+`/_pool/rr/*` は要求ごとにアカウントを巡回する入口です。
+インストーラが作る `~/.codex-pool/rr.json` に、そのbase URLとクライアントキーのパスがあります。
+
+```json
+{"base_url": "http://127.0.0.1:18473/_pool/rr", "key_file": "/Users/me/.codex-pool/state/client.key"}
+```
 
 ```bash
 pool-rr codex exec "このリポジトリを調べて"
-pool-rr kb paper-demo --remote codex exec "この論文の要点を説明して"
 ```
 
-`Remote KB` は外部サーバーを意味せず、ローカル号池へのKB登録機能です。
-`kb NAME claude` は復号済み資料をClaude Codeへ渡すだけで、号池は使いません。
+kb-repomap などのRRクライアントは、RRのbase URLを `http://127.0.0.1:18473/_pool/rr` に向けて使えます。
+号池はRRクライアントを起動・設定しません。
 
 ## 設定例
 
