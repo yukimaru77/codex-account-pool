@@ -227,7 +227,7 @@ echo "installed wrapper $WRAPPER"
 tmp_rr=$RR_WRAPPER.tmp.$$
 cat >"$tmp_rr" <<RRWRAPPER
 #!/bin/sh
-# codex-pool pool-rr: round-robin codex exec / kb NAME codex on the local pool.
+# codex-pool pool-rr: round-robin codex exec on the local pool.
 exec python3 "$REPO/scripts/pool-rr.py" --config "$KB_POOL" "\$@"
 RRWRAPPER
 chmod 0755 "$tmp_rr"

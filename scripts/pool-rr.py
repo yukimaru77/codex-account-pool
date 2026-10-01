@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run codex exec or kb NAME codex through the pool's explicit round-robin endpoints."""
+"""Run codex exec through the pool's explicit round-robin endpoints."""
 
 import argparse
 import importlib.util
@@ -21,16 +21,8 @@ def default_config():
 
 
 def command(config_path, argv):
-    executable = Path(argv[0]).name if argv else None
-    is_codex = executable == "codex" and argv[1:2] == ["exec"]
-    is_kb = executable == "kb" and len(argv) >= 3 and (
-        (argv[1] == "codex" and not argv[2].startswith("-"))
-        or ("codex" in argv[2:] and any(
-            not arg.startswith("-") for arg in argv[1:argv.index("codex", 2)]
-        ))
-    )
-    if not is_codex and not is_kb:
-        raise ValueError("usage: pool-rr [--config local pool config] {codex exec | kb NAME [KB-options] codex} ...")
+    if not argv or Path(argv[0]).name != "codex" or argv[1:2] != ["exec"]:
+        raise ValueError("usage: pool-rr [--config local pool config] codex exec ...")
     config_path = Path(config_path).expanduser().resolve()
     config = json.loads(config_path.read_text())
     spec = importlib.util.spec_from_file_location("compact_jsonl", ROOT / "scripts/compact-jsonl.py")
@@ -72,15 +64,7 @@ def command(config_path, argv):
     overrides = ['model_provider="pool_rr"', "model_providers.pool_rr=" + table,
                  "model_catalog_json=" + json.dumps(str(catalog))]
     env = dict(os.environ, CODEX_POOL_RR_KEY=key)
-    if is_kb:
-        args = list(argv)
-        # KB must bind remote items and launch every Codex process on this pool.
-        env.update(KB_CODEX_CONFIG_OVERRIDES=json.dumps(overrides),
-                   KB_POOL_ORIGIN=config["origin"].rstrip("/"),
-                   KB_POOL_KEY_FILE=str(key_file),
-                   KB_POOL_PRIVATE_HTTP="0")
-    else:
-        args = [argv[0], "exec", *[arg for override in overrides for arg in ("-c", override)], *argv[2:]]
+    args = [argv[0], "exec", *[arg for override in overrides for arg in ("-c", override)], *argv[2:]]
     return args, env
 
 
@@ -88,7 +72,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--config", default=None,
                         help="pool config (default: ~/.codex-pool/kb-pool.json if present, else repository local pool config)")
-    parser.add_argument("command", nargs=argparse.REMAINDER, help="codex exec ... or kb NAME [KB-options] codex ...")
+    parser.add_argument("command", nargs=argparse.REMAINDER, help="codex exec ...")
     options = parser.parse_args()
     argv = options.command
     if argv[:1] == ["--"]:
