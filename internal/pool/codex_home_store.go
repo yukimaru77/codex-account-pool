@@ -300,7 +300,15 @@ func ReadCodexAuthFile(path string) (Credential, error) {
 }
 
 // SharedExclude lists the Codex home entries that stay per account.
-var SharedExclude = map[string]bool{"auth.json": true, "models_cache.json": true, "log": true, "tmp": true, "app-server-control": true}
+var SharedExclude = map[string]bool{"auth.json": true, "models_cache.json": true, "log": true, "tmp": true,
+	"app-server-control": true, "app-server-daemon": true}
+
+// perAccountDirs are SharedExclude entries Codex expects to be real
+// directories: Codex 0.159 refuses to start its background server when they
+// are symlinks. Directories created before they were excluded may still hold
+// a symlink into codexHome; LinkShared replaces such a symlink with an empty
+// private directory.
+var perAccountDirs = map[string]bool{"app-server-control": true, "app-server-daemon": true}
 
 // LinkShared symlinks every top-level entry of codexHome (except SharedExclude
 // and names starting with ".write-") into dir, replacing existing symlinks,
@@ -319,6 +327,17 @@ func LinkShared(dir, codexHome string) ([]string, error) {
 		return nil, err
 	}
 	linked := []string{}
+	for name := range perAccountDirs {
+		dst := filepath.Join(target, name)
+		if info, err := os.Lstat(dst); err == nil && info.Mode()&os.ModeSymlink != 0 {
+			if err := os.Remove(dst); err != nil {
+				return linked, err
+			}
+			if err := os.Mkdir(dst, 0o700); err != nil {
+				return linked, err
+			}
+		}
+	}
 	for _, e := range entries {
 		name := e.Name()
 		if SharedExclude[name] || strings.HasPrefix(name, ".write-") {

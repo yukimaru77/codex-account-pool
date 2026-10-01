@@ -615,3 +615,31 @@ func TestAccountLoginRejectsUnknownName(t *testing.T) {
 		t.Fatal("login created a directory", err)
 	}
 }
+
+func TestLinkSharedReplacesAppServerSymlinksWithDirectories(t *testing.T) {
+	home := t.TempDir()
+	for _, d := range []string{"app-server-control", "app-server-daemon", "sessions"} {
+		if err := os.MkdirAll(filepath.Join(home, d), 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	account := t.TempDir()
+	// An account made by an older pool still links these into codex_home.
+	for _, d := range []string{"app-server-control", "app-server-daemon"} {
+		if err := os.Symlink(filepath.Join(home, d), filepath.Join(account, d)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := pool.LinkShared(account, home); err != nil {
+		t.Fatal(err)
+	}
+	for _, d := range []string{"app-server-control", "app-server-daemon"} {
+		info, err := os.Lstat(filepath.Join(account, d))
+		if err != nil || info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
+			t.Fatalf("%s must be a real directory, got %v %v", d, info, err)
+		}
+	}
+	if info, err := os.Lstat(filepath.Join(account, "sessions")); err != nil || info.Mode()&os.ModeSymlink == 0 {
+		t.Fatalf("shared entries stay linked: %v %v", info, err)
+	}
+}
