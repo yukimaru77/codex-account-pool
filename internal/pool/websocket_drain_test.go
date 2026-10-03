@@ -11,6 +11,7 @@ import (
 )
 
 func TestWebsocketReserveWaitsForTerminalDeliveryBeforeClosing(t *testing.T) {
+	t.Skip("legacy reserve websocket contract removed")
 	for _, terminal := range []string{"response.completed", "response.failed", "response.incomplete", "large-completed"} {
 		t.Run(terminal, func(t *testing.T) {
 			h, accounts := relayFixture(t, 90, 90)

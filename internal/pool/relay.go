@@ -109,33 +109,21 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	path := r.URL.Path
 	rawPath := r.URL.RawPath
-	policy := FillFirst
-	if route, ok := h.Config.RoundRobin[path]; ok {
+	route, configured := h.Config.RoundRobin[path]
+	if configured {
 		path = route.Path
 		rawPath = ""
-		policy = RoundRobin
 	}
-	if policy == RoundRobin && (r.URL.Path == "/_pool/rr/images/generations" || r.URL.Path == "/_pool/rr/images/edits") {
-		if !prepareImageRR(w, r, path) {
-			return
-		}
-	}
+	policy := RoundRobin
 	if path == "/backend-api/codex/responses" && strings.EqualFold(r.Header.Get("Upgrade"), "websocket") {
 		// Like codex-lb's direct egress, negotiate plain frames so terminal
 		// and quota events remain observable. No frame payload is rewritten.
 		r.Header.Del("Sec-WebSocket-Extensions")
 	}
-	pinned := ""
-	if policy == RoundRobin {
-		if values, present := r.Header[http.CanonicalHeaderKey("X-Pool-Account")]; present {
-			if len(values) != 1 || strings.TrimSpace(values[0]) == "" || strings.ContainsAny(values[0], " ,\t\r\n") {
-				http.Error(w, "X-Pool-Account must contain one full auth_index", 400)
-				return
-			}
-			pinned = values[0]
-		}
-	}
-	id, err := h.Scheduler.Select(policy, path, pinned)
+	// RR routes choose an account for every new request. Clients do not pin
+	// requests to an account; X-Pool-Account is intentionally ignored so an
+	// invocation wrapper and KB client cannot override the pool's RR policy.
+	id, err := h.Scheduler.Select(policy, path, "")
 	if err != nil {
 		http.Error(w, err.Error(), 503)
 		return

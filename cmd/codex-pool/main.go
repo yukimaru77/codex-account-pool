@@ -202,6 +202,14 @@ func run(args []string, out io.Writer) error {
 		}
 		return json.NewEncoder(out).Encode(st)
 	case "serve":
+		accounts, err := store.List()
+		if err != nil {
+			return err
+		}
+		// Serving RR requests only needs the enabled account roster. Quota
+		// polling belongs to the old fill-first launcher and is intentionally
+		// absent from the server path.
+		h.Scheduler.Sync(accounts)
 		lock, err := os.OpenFile(filepath.Join(cfg.StateDir, "server.lock"), os.O_CREATE|os.O_RDWR, 0600)
 		if err != nil {
 			return err
@@ -211,10 +219,6 @@ func run(args []string, out io.Writer) error {
 			return fmt.Errorf("another pool server is using this state directory")
 		}
 		defer func() { _ = unix.Flock(int(lock.Fd()), unix.LOCK_UN) }()
-		if err = h.Poll(ctx); err != nil {
-			return err
-		}
-		go h.PollLoop(ctx)
 		server := &http.Server{Addr: cfg.Listen, Handler: h, BaseContext: func(net.Listener) context.Context { return ctx }}
 		go func() {
 			<-ctx.Done()
@@ -222,7 +226,7 @@ func run(args []string, out io.Writer) error {
 			defer cancel()
 			_ = server.Shutdown(shutdown)
 		}()
-		fmt.Fprintf(out, "Codex account pool listening on %s; reserve %.2f%% of weekly quota\n", cfg.Listen, cfg.ReservePercent)
+		fmt.Fprintf(out, "Codex account pool RR server listening on %s\n", cfg.Listen)
 		if cfg.TLSCert != "" || cfg.TLSKey != "" {
 			err = server.ListenAndServeTLS(cfg.TLSCert, cfg.TLSKey)
 		} else {

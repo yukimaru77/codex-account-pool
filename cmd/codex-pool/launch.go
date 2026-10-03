@@ -8,13 +8,10 @@ import (
 	"io"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"slices"
-	"sort"
 	"strconv"
 	"strings"
 	"syscall"
-	"time"
 
 	"codex-account-pool/internal/pool"
 )
@@ -101,59 +98,12 @@ func codexSubcommand(args []string) string {
 	return ""
 }
 
-// inheritedAccount reports whether codexHome is a direct child of
-// accountsDir and returns that child's name. Both paths are cleaned and,
-// where they exist, resolved through symlinks.
-func inheritedAccount(codexHome, accountsDir string) (string, bool) {
-	if codexHome == "" {
-		return "", false
-	}
-	resolve := func(p string) string {
-		p, err := filepath.Abs(p)
-		if err != nil {
-			return filepath.Clean(p)
-		}
-		if real, err := filepath.EvalSymlinks(p); err == nil {
-			return real
-		}
-		// A missing account directory still names it; resolve its parent.
-		if parent, err := filepath.EvalSymlinks(filepath.Dir(p)); err == nil {
-			return filepath.Join(parent, filepath.Base(p))
-		}
-		return p
-	}
-	home, dir := resolve(codexHome), resolve(accountsDir)
-	if filepath.Dir(home) != dir {
-		return "", false
-	}
-	return filepath.Base(home), true
-}
-
-// helpOnly reports whether the Codex arguments (up to any "--") are only help
-// or version flags, which need no account.
-func helpOnly(args []string) bool {
-	if i := slices.Index(args, "--"); i >= 0 {
-		args = args[:i]
-	}
-	if len(args) == 0 {
-		return false
-	}
-	for _, a := range args {
-		switch a {
-		case "--help", "-h", "--version", "-V":
-		default:
-			return false
-		}
-	}
-	return true
-}
-
-// runLaunch picks the account directory with the most usable weekly quota
-// (fill-first), sets CODEX_HOME to it and execs the real Codex binary.
+// runLaunch is a compatibility pass-through for older wrappers. Account
+// selection is deliberately not done here: normal Codex launches must use the
+// user's existing CODEX_HOME, while the pool server is reserved for explicit
+// round-robin requests.
 func runLaunch(ctx context.Context, cfg pool.Config, store *pool.CodexHomeStore, deps launchDeps, args []string) error {
 	if os.Getenv(launchedEnv) == strconv.Itoa(os.Getpid()) {
-		// syscall.Exec and the wrapper's exec keep the PID, so this process
-		// already ran launch once: codex_bin leads back here.
 		return errors.New("launch re-entered itself; codex_bin points at the wrapper")
 	}
 	o, err := parseLaunchArgs(args)
@@ -165,142 +115,12 @@ func runLaunch(ctx context.Context, cfg pool.Config, store *pool.CodexHomeStore,
 	}
 	argv := append([]string{cfg.CodexBin}, o.codexArgs...)
 	if sub := codexSubcommand(o.codexArgs); sub == "login" || sub == "logout" {
-		// Through the wrapper this would log in whichever account was chosen.
 		return errors.New("run login/logout per account: codex-pool account login NAME  (or CODEX_HOME=<dir> <codex_bin> login)")
 	}
-	inherited, fromHome := inheritedAccount(os.Getenv("CODEX_HOME"), store.Dir)
-	if os.Getenv("CODEX_HOME") != "" && !fromHome {
-		// The caller chose its own Codex home outside the pool.
-		return deps.exec(cfg.CodexBin, argv, withLaunchedMarker(os.Environ()))
+	if o.account != "" || os.Getenv("CODEX_POOL_ACCOUNT") != "" {
+		return errors.New("account selection was removed from codex-pool; set CODEX_HOME explicitly")
 	}
-	if helpOnly(o.codexArgs) {
-		return deps.exec(cfg.CodexBin, argv, withLaunchedMarker(os.Environ()))
-	}
-	stderr := deps.stderr
-	if stderr == nil {
-		stderr = io.Discard
-	}
-	list, err := store.List()
-	if err != nil {
-		return err
-	}
-	creds := make(map[string]pool.Credential, len(list))
-	names := make(map[string]string, len(list)) // account ID -> directory name
-	for _, c := range list {
-		creds[c.Name] = c
-		names[c.ID()] = c.Name
-	}
-
-	pinned := o.account
-	if pinned == "" {
-		pinned = os.Getenv("CODEX_POOL_ACCOUNT")
-	}
-	if pinned == "" && fromHome {
-		// A nested codex inside a pooled session keeps that session's account.
-		pinned = inherited
-	}
-	var chosen string
-	var statuses []pool.AccountStatus
-	if pinned != "" {
-		c, ok := creds[pinned]
-		if !ok {
-			if msg, broken := store.Errors()[pinned]; broken {
-				return fmt.Errorf("account %q is unusable: %s", pinned, msg)
-			}
-			return fmt.Errorf("account %q not found in %s", pinned, store.Dir)
-		}
-		if c.Disabled {
-			return fmt.Errorf("account %q is disabled; enable it with: codex-pool account enable %s", pinned, pinned)
-		}
-		chosen = pinned
-		if !o.quiet {
-			statuses, _ = mapStatuses(ctx, deps.status, creds, names)
-		}
-	} else {
-		var statusErr error
-		statuses, statusErr = mapStatuses(ctx, deps.status, creds, names)
-		maxAge := time.Duration(cfg.QuotaMaxAgeSeconds) * time.Second
-		id, ok := pool.PickFillFirst(statuses, time.Now(), maxAge, cfg.ReservePercent)
-		for _, s := range statuses {
-			if s.ID == id {
-				chosen = s.Name
-			}
-		}
-		switch {
-		case chosen != "" && !ok:
-			fmt.Fprintf(stderr, "codex-pool: no account has quota above reserve; using %s\n", chosen)
-		case chosen == "":
-			if chosen = firstEnabled(creds); chosen == "" {
-				return fmt.Errorf("no enabled account in %s; add one with: codex-pool account add NAME", store.Dir)
-			}
-			reason := "no quota status for any enabled account"
-			if statusErr != nil {
-				reason = "quota status unavailable: " + statusErr.Error()
-			}
-			fmt.Fprintf(stderr, "codex-pool: %s; using %s\n", reason, chosen)
-		}
-	}
-
-	dir := store.Path(chosen)
-	env := slices.DeleteFunc(os.Environ(), func(kv string) bool { return strings.HasPrefix(kv, "CODEX_HOME=") })
-	env = withLaunchedMarker(append(env, "CODEX_HOME="+dir))
-	if !o.quiet {
-		fmt.Fprintf(stderr, "codex-pool: account=%s remaining=%s%%\n", chosen, remainingOf(statuses, chosen))
-	}
-	return deps.exec(cfg.CodexBin, argv, env)
-}
-
-// mapStatuses fetches the status and keeps the entries that belong to an
-// account directory, filling Name from the ID for legacy (unnamed) statuses.
-// The directory's disabled marker is authoritative.
-func mapStatuses(ctx context.Context, status func(context.Context) ([]pool.AccountStatus, error), creds map[string]pool.Credential, names map[string]string) ([]pool.AccountStatus, error) {
-	if status == nil {
-		return nil, errors.New("no status source")
-	}
-	st, err := status(ctx)
-	if err != nil {
-		return nil, err
-	}
-	var out []pool.AccountStatus
-	for _, s := range st {
-		if s.Name == "" {
-			s.Name = names[s.ID]
-		}
-		c, ok := creds[s.Name]
-		if !ok {
-			continue
-		}
-		s.Disabled = s.Disabled || c.Disabled
-		out = append(out, s)
-	}
-	return out, nil
-}
-
-func firstEnabled(creds map[string]pool.Credential) string {
-	var names []string
-	for name, c := range creds {
-		if !c.Disabled {
-			names = append(names, name)
-		}
-	}
-	sort.Strings(names)
-	if len(names) == 0 {
-		return ""
-	}
-	return names[0]
-}
-
-// remainingOf formats the weekly quota left for name, or "?" when unknown.
-func remainingOf(statuses []pool.AccountStatus, name string) string {
-	for _, s := range statuses {
-		if s.Name != name || s.Error != "" {
-			continue
-		}
-		if left, ok := s.Quota.WeeklyRemaining(); ok {
-			return fmt.Sprintf("%.0f", left)
-		}
-	}
-	return "?"
+	return deps.exec(cfg.CodexBin, argv, withLaunchedMarker(os.Environ()))
 }
 
 // execCodex replaces this process with the Codex binary.

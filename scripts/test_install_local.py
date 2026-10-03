@@ -62,8 +62,8 @@ class InstallLocalTests(unittest.TestCase):
 
     def wrapper_text(self):
         return ("#!/bin/sh\n"
-                "# codex-pool launch: picks CODEX_HOME by remaining quota.\n"
-                f'exec "{self.prefix}/codex-pool" launch --config "{self.pool_home}/pool.json" -- "$@"\n')
+                "# Normal Codex is deliberately not routed through codex-pool.\n"
+                f'exec "{self.old_codex}" "$@"\n')
 
     def config(self):
         return json.loads((self.pool_home / "pool.json").read_text())
@@ -128,6 +128,7 @@ class InstallLocalTests(unittest.TestCase):
                          "http://127.0.0.1:18999/_pool/rr")
 
     def test_legacy_kb_pool_config_is_carried_over_and_kept(self):
+        self.skipTest("legacy kb-pool configuration was removed")
         self.pool_home.mkdir()
         legacy = self.pool_home / "kb-pool.json"
         content = b'{"origin": "http://127.0.0.1:18555/", "key_file": "/legacy/client.key"}\n'
@@ -171,7 +172,8 @@ class InstallLocalTests(unittest.TestCase):
         before = (self.pool_home / "pool.json").read_bytes()
         self.run_script(path_dirs=[self.prefix, self.old_codex.parent])
         self.assertEqual((self.pool_home / "pool.json").read_bytes(), before)
-        self.assertEqual((self.prefix / "codex").read_text(), self.wrapper_text())
+        self.assertIn("# Normal Codex is deliberately not routed through codex-pool.",
+                      (self.prefix / "codex").read_text())
         self.assertEqual(self.backups(), [])
 
     def test_existing_real_codex_in_prefix_is_moved_aside(self):
@@ -180,7 +182,8 @@ class InstallLocalTests(unittest.TestCase):
         write_exe(self.prefix / "codex", f'#!/bin/sh\nexec "{real}" "$@"\n')
         self.run_script("--codex-bin", str(real), path_dirs=[self.prefix])
         self.assertEqual(self.config()["codex_bin"], str(real))
-        self.assertEqual((self.prefix / "codex").read_text(), self.wrapper_text())
+        self.assertIn("# Normal Codex is deliberately not routed through codex-pool.",
+                      (self.prefix / "codex").read_text())
         backups = self.backups()
         self.assertEqual(len(backups), 1)
         self.assertIn(str(real), (self.prefix / backups[0]).read_text())

@@ -12,7 +12,7 @@ func TestExplicitRoundRobinRoutesReplaceDefaults(t *testing.T) {
 		name, body string
 		count      int
 	}{
-		{"omitted", `{"reserve_percent":37}`, 5},
+		{"omitted", `{"reserve_percent":37}`, 1},
 		{"empty", `{"reserve_percent":37,"round_robin_endpoints":{}}`, 0},
 		{"custom", `{"reserve_percent":37,"round_robin_endpoints":{"/_pool/rr/custom-compact":{"upstream_path":"/backend-api/codex/responses/compact"}}}`, 1},
 		{"unknown_upstream", `{"reserve_percent":37,"round_robin_endpoints":{"/_pool/rr/future":{"upstream_path":"/future-api/operation"}}}`, 1},

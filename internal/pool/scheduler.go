@@ -127,6 +127,11 @@ func (s *Scheduler) Select(policy Policy, route, pinned string) (string, error) 
 		reserve = 0
 	}
 	usable := func(a AccountStatus) bool {
+		if policy == RoundRobin {
+			// RR is deliberately independent of quota snapshots and reserve
+			// thresholds. It only skips disabled, failed, or cooling accounts.
+			return !a.Disabled && a.Error == "" && !a.Cooldowns[route].After(now)
+		}
 		return !a.Disabled && a.Error == "" && !a.Cooldowns[route].After(now) && a.Quota.usable(now, s.maxAge, reserve)
 	}
 	if pinned != "" {

@@ -62,11 +62,7 @@ func resolvePath(base, p string) (string, error) {
 
 func DefaultConfig() Config {
 	return Config{Listen: "127.0.0.1:18473", StateDir: "state", ReservePercent: 10, QuotaPollSeconds: 60, QuotaMaxAgeSeconds: 180, RoundRobin: map[string]Route{
-		"/_pool/rr/images/generations": {Path: "/backend-api/codex/images/generations"},
-		"/_pool/rr/images/edits":       {Path: "/backend-api/codex/images/edits"},
-		"/_pool/rr/responses/compact":  {Path: "/backend-api/codex/responses/compact"},
-		"/_pool/rr/responses":          {Path: "/backend-api/codex/responses"},
-		"/_pool/rr/alpha/search":       {Path: "/backend-api/codex/alpha/search"},
+		"/_pool/rr/responses": {Path: "/backend-api/codex/responses"},
 	}}
 }
 

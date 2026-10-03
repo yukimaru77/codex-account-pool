@@ -120,8 +120,10 @@ func TestSchedulerSkipsExhaustedStaleDisabledAndRPMWait(t *testing.T) {
 	s.accounts[ids[2]] = a
 	s.Cooldown(ids[3], "images", testNow.Add(time.Minute))
 	got, err := s.Select(RoundRobin, "images", "")
-	if err != nil || got != ids[4] {
-		t.Fatalf("got %s %v", got, err)
+	expected := append([]string(nil), ids[0], ids[1], ids[4])
+	sort.Strings(expected)
+	if err != nil || got != expected[0] {
+		t.Fatalf("got %s want %s: %v", got, expected[0], err)
 	}
 	// Endpoint RPM cooldown does not suppress an unrelated request type.
 	got, err = s.Select(FillFirst, "compact", "")

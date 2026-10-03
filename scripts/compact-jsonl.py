@@ -77,7 +77,7 @@ def endpoint(origin):
     url = urllib.parse.urlsplit(origin)
     if (url.scheme not in ("https", "http") or not url.hostname or url.username is not None
             or url.password is not None or url.path not in ("", "/") or url.query or url.fragment):
-        raise ValueError("--origin must be an http(s) origin without credentials or path")
+        raise ValueError("base_url must be a local http(s) origin without credentials or path")
     try:
         local = ipaddress.ip_address(url.hostname).is_loopback
     except ValueError:
@@ -88,32 +88,24 @@ def endpoint(origin):
 
 
 def default_config():
-    """The local pool's rr.json, or the legacy kb-pool.json when only it exists."""
-    home = Path.home() / ".codex-pool"
-    legacy = home / "kb-pool.json"
-    return legacy if not (home / "rr.json").is_file() and legacy.is_file() else home / "rr.json"
+    """The local pool's RR client config."""
+    return Path.home() / ".codex-pool" / "rr.json"
 
 
 def config_origin(config):
-    """Origin from base_url (http://host:port/_pool/rr) or the legacy origin key."""
+    """Origin from base_url (http://host:port/_pool/rr)."""
     base = config.get("base_url")
-    if base is None:
-        return config.get("origin")
     if not isinstance(base, str) or not base.rstrip("/").endswith("/_pool/rr"):
         raise ValueError("base_url must end with /_pool/rr")
     return base.rstrip("/").removesuffix("/_pool/rr")
 
 
 def connection(args):
-    # Use the installed local pool config unless explicitly overridden.
-    config = {}
-    config_path = None
-    if args.pool_config or not args.origin:
-        config_path = Path(args.pool_config or default_config()).expanduser().resolve()
-        config = json.loads(config_path.read_text())
-    origin = args.origin or config_origin(config)
+    config_path = Path(args.config or default_config()).expanduser().resolve()
+    config = json.loads(config_path.read_text())
+    origin = config_origin(config)
     if not origin:
-        raise ValueError("set base_url in --pool-config or pass --origin")
+        raise ValueError("set base_url in the RR config")
     url = endpoint(origin)
     if args.key_file:
         key_file = Path(args.key_file).expanduser()
@@ -144,8 +136,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("jsonl", help="prepared input JSONL file, or - for stdin")
     parser.add_argument("--model", required=True, help="upstream model, sent unchanged")
-    parser.add_argument("--pool-config", help="local pool config (default: ~/.codex-pool/rr.json)")
-    parser.add_argument("--origin", help="override local pool origin (loopback only)")
+    parser.add_argument("--config", help="local pool RR config (default: ~/.codex-pool/rr.json)")
     parser.add_argument("--key-file", help="override pool client key file")
     parser.add_argument("--output", default="-", help="compaction item JSON file; default stdout")
     parser.add_argument("--instructions", default="Preserve the information in the provided conversation.")

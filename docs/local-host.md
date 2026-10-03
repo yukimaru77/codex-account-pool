@@ -36,7 +36,6 @@ scripts/install-local.sh
    `round_robin_endpoints` は書かず、組み込みの既定入口を使う。
 3. `rr.json` が無ければ作る。内容は `base_url`（`pool.json` の `listen` に `/_pool/rr` を付けたもの）と
    `key_file`（`state/client.key` の絶対パス）の2項目だけ。既にあれば変更しない。
-   旧版の `kb-pool.json` だけがある場合は、その値から `rr.json` を作り、`kb-pool.json` は残す。
    `pool-rr`、`scripts/compact-jsonl.py` などのRRクライアントが読む。
 4. ラッパー `--prefix/codex` を置く。同名の別ファイルがあれば
    `codex.pre-pool-日付` へ退避する。ラッパー自身は退避しない。
@@ -120,27 +119,11 @@ codex-pool account relink --all --config ~/.codex-pool/pool.json
 無効化はアカウントのディレクトリに `disabled` を置くだけで、`auth.json` は変更しない。
 Codex は auth.json をその場で上書きする（原子的ではない）。号池は読み取り中に壊れたファイルを掴んだ場合、短い待ちで数回再読込する。同時 refresh は Codex 側が更新前にディスクを再読込するため稀で、起きても 401 → 再読込で回復する。
 
-## 3. アカウントの選び方
+## 3. 通常のCodex起動
 
-`codex` を実行するたびに、ラッパーが次の順でアカウントを選ぶ。
-
-1. `CODEX_HOME` が既に設定されている場合、それが `accounts_dir` 直下のディレクトリなら
-   そのアカウントに固定する（プールで起動したセッション内から入れ子で `codex` を
-   実行しても同じアカウントを使う）。それ以外の場所なら選択せず、環境を変えずに本物のCodexを実行する。
-   `--help` や `--version` だけの呼び出しも選択せずそのまま実行する。
-2. 有効なアカウントの残量を `serve` の `/_pool/status` から取得する。
-   `serve` が応答しなければ各アカウントを直接問い合わせる。
-3. 週の残量が `reserve_percent` 以下のものを除き、週リセットが近い順のfill-firstで選ぶ。
-   同じ条件なら名前順。
-4. 選んだディレクトリを `CODEX_HOME` にして本物のCodexを実行する。
-   stderrに `codex-pool: account=名前 remaining=残量%` を1行出す。
-
-全アカウントが予備残量以下でも起動は止めず、残量が最も多いものを警告付きで使う。
-固定したい場合は環境変数で指定する（`--account` > `CODEX_POOL_ACCOUNT` > 継承した `CODEX_HOME` の順に優先）。
-
-```bash
-CODEX_POOL_ACCOUNT=sub1 codex
-```
+インストールされた `codex` は通常のCodexバイナリへそのまま引き継ぐ。
+号池は `CODEX_HOME`、残量、ログイン状態を変更しない。通常セッションの
+アカウント切替はCodex側が担当する。
 
 ## 4. round-robin入口（RR）
 
@@ -162,47 +145,13 @@ pool-rr codex exec "このリポジトリを調べて"
 
 `pool-rr` は `rr.json` の `base_url` と `key_file` を使い、その実行の Codex だけ
 provider を `/_pool/rr` に向ける。各推論要求ごとにアカウントを巡回する。
-`scripts/pool-rr.py` を直接実行した場合も、`~/.codex-pool/rr.json`（無ければ旧版の `kb-pool.json`）を
-既定の設定として使う。インストール前に設定が無ければエラーになります。
+`scripts/pool-rr.py` を直接実行した場合も、`~/.codex-pool/rr.json` を既定の設定として使う。
+インストール前に設定が無ければエラーになります。
 
-`pool-rr` はPATH上の `codex` を実行するため、ラッパー経由になる。
-このためラッパーの `codex-pool: account=名前 remaining=残量%` は表示されるが、
-推論はRRのproviderを通るので、実際に使うアカウントは要求ごとに号池が選ぶ。
-表示されたアカウントは起動時の `CODEX_HOME` の選択にすぎない。
+`pool-rr` はPATH上の通常の `codex` を実行し、推論要求だけを明示的なRR
+providerへ向ける。通常の `codex` 起動は号池を経由しない。
 モデル一覧は `$CODEX_HOME/models_cache.json`（既定 `~/.codex/models_cache.json`）を使うため、
 先に通常の `codex` を一度起動しておく。
-
-### RRで使うアカウントを固定する（X-Pool-Account）
-
-`/_pool/rr/*` への要求に `X-Pool-Account: <auth_index>` を付けると、
-そのアカウントだけを使う（通常RRの順番は進めない）。
-値は32桁16進の完全な `auth_index` で、メールアドレスや名前ではない。
-名前から調べるには `account list` の `AUTH_INDEX` 列を見る（管理キー不要）。
-`codex-pool status` の出力（`/_pool/status` と同じJSON）の `auth_index` でもよい。
-
-```bash
-codex-pool account list --config ~/.codex-pool/pool.json
-codex-pool status --config ~/.codex-pool/pool.json
-```
-
-指定したアカウントが不明・無効・利用枠不足・クールダウン中なら503を返し、
-別アカウントへ切り替えない。空値や複数指定は400。
-このヘッダーは上流へ送らず、通常のCodex用URLでは無視する。
-
-### 画像RRの形式
-
-`/_pool/rr/images/generations` と `/_pool/rr/images/edits` はJSONだけを受け付ける。
-
-```json
-{"prompt": "画像の指示"}
-{"prompt": "編集指示", "images": [{"image_url": "data:image/png;base64,..."}]}
-```
-
-上が生成、下が編集。編集の `images` は1〜5枚。
-model・quality・size・background・n などは号池が固定する（`gpt-image-2`、auto）ため、
-指定すると400になる。multipartはRR入口では400になる。
-上流の編集APIもmultipartには400 `Unsupported content type` を返すため、
-画像は `data:` URLにしてJSONで送る。
 
 ### RRの headers
 
@@ -215,9 +164,6 @@ model・quality・size・background・n などは号池が固定する（`gpt-im
 
 ```json
 "round_robin_endpoints": {
-  "/_pool/rr/images/generations": {"upstream_path": "/backend-api/codex/images/generations"},
-  "/_pool/rr/images/edits": {"upstream_path": "/backend-api/codex/images/edits"},
-  "/_pool/rr/responses/compact": {"upstream_path": "/backend-api/codex/responses/compact"},
   "/_pool/rr/responses": {"upstream_path": "/backend-api/codex/responses",
                           "headers": {"originator": "codex_exec"}}
 }

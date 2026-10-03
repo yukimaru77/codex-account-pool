@@ -13,12 +13,11 @@ ROOT = Path(__file__).resolve().parent.parent
 
 
 def default_config():
-    """The local pool's rr.json (or legacy kb-pool.json) when installed."""
-    for name in ("rr.json", "kb-pool.json"):
-        local = Path.home() / ".codex-pool" / name
-        if local.is_file():
-            return local
-    raise ValueError("local pool config not found; run scripts/install-local.sh")
+    """The local pool's RR client config."""
+    local = Path.home() / ".codex-pool" / "rr.json"
+    if not local.is_file():
+        raise ValueError("local pool config not found; run scripts/install-local.sh")
+    return local
 
 
 def command(config_path, argv):
@@ -54,13 +53,6 @@ def command(config_path, argv):
         "request_max_retries": 0,
         "stream_max_retries": 0,
     }
-    standalone_search = config.get("rr_standalone_web_search", False)
-    if type(standalone_search) is not bool:
-        raise ValueError("rr_standalone_web_search must be a boolean")
-    if standalone_search:
-        # Enable only after deploying /_pool/rr/alpha/search on the server.
-        # Lite-model Codex hides hosted web_search and needs this capability.
-        provider["supports_standalone_web_search"] = True
     table = "{ " + ", ".join(k + " = " + json.dumps(v) for k, v in provider.items()) + " }"
     catalog = Path(config.get("rr_model_catalog", str(Path(os.environ.get("CODEX_HOME", Path.home() / ".codex")) / "models_cache.json"))).expanduser().resolve()
     if not catalog.is_file():
@@ -75,7 +67,7 @@ def command(config_path, argv):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--config", default=None,
-                        help="pool config (default: ~/.codex-pool/rr.json, or legacy kb-pool.json)")
+                        help="pool RR config (default: ~/.codex-pool/rr.json)")
     parser.add_argument("command", nargs=argparse.REMAINDER, help="codex exec ...")
     options = parser.parse_args()
     argv = options.command

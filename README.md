@@ -31,8 +31,8 @@ codex exec "質問"
 codex-pool status --config ~/.codex-pool/pool.json
 ```
 
-`codex` ラッパーは週の残量とリセット時刻でアカウントを選び、選択した `CODEX_HOME` で本物のCodexを起動します。
-通常のCodex設定やログイン状態を共有上書きしません。
+`codex` は通常のCodexをそのまま起動します。号池は通常セッションの
+`CODEX_HOME`、残量、ログイン状態に介入しません。
 
 ## round-robin
 
@@ -48,7 +48,8 @@ pool-rr codex exec "このリポジトリを調べて"
 ```
 
 kb-repomap などのRRクライアントは、RRのbase URLを `http://127.0.0.1:18473/_pool/rr` に向けて使えます。
-号池はRRクライアントを起動・設定しません。
+号池はRRクライアントを起動・設定しません。通常のCodexセッションは
+Codex自身のアカウント切替機能を使います。
 
 ## 設定例
 

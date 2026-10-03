@@ -81,106 +81,42 @@ func envValues(env []string, key string) []string {
 	return out
 }
 
-func TestLaunchSetsCodexHomeAndExecs(t *testing.T) {
+func TestLaunchPassesThroughWithoutSelectingAnAccount(t *testing.T) {
 	t.Setenv("CODEX_POOL_ACCOUNT", "")
 	t.Setenv("LAUNCH_TEST_KEEP", "1")
-	cfg, store, ids := launchEnv(t, map[string]bool{"alice": false, "bob": false})
-	status := func(context.Context) ([]pool.AccountStatus, error) {
-		return []pool.AccountStatus{
-			{ID: ids["alice"], Name: "alice", Quota: weekly(60, 24*time.Hour)},
-			{ID: ids["bob"], Name: "bob", Quota: weekly(90, 72*time.Hour)},
-		}, nil
-	}
+	cfg, store, _ := launchEnv(t, map[string]bool{"alice": false, "bob": false})
 	var call execCall
 	var stderr bytes.Buffer
-	if err := runLaunch(context.Background(), cfg, store, recordingDeps(status, &call, &stderr), []string{"--", "exec", "--json", "hi"}); err != nil {
+	if err := runLaunch(context.Background(), cfg, store, recordingDeps(nil, &call, &stderr), []string{"--", "exec", "--json", "hi"}); err != nil {
 		t.Fatal(err)
 	}
 	if !call.called || call.bin != cfg.CodexBin {
 		t.Fatalf("exec = %+v", call)
 	}
-	if want := []string{cfg.CodexBin, "exec", "--json", "hi"}; !slices.Equal(call.args, want) {
-		t.Fatalf("args = %q, want %q", call.args, want)
-	}
-	if got := envValues(call.env, "CODEX_HOME"); !slices.Equal(got, []string{store.Path("alice")}) {
+	if got := envValues(call.env, "CODEX_HOME"); len(got) != 1 || got[0] != "" {
 		t.Fatalf("CODEX_HOME = %q", got)
 	}
 	if got := envValues(call.env, "CODEX_POOL_LAUNCHED"); !slices.Equal(got, []string{strconv.Itoa(os.Getpid())}) {
-		t.Fatalf("CODEX_POOL_LAUNCHED = %q", got)
+		t.Fatalf("marker = %q", got)
 	}
 	if got := envValues(call.env, "LAUNCH_TEST_KEEP"); !slices.Equal(got, []string{"1"}) {
 		t.Fatalf("environment not inherited: %q", got)
 	}
-	if got := stderr.String(); got != "codex-pool: account=alice remaining=60%\n" {
-		t.Fatalf("stderr = %q", got)
-	}
-
-	// A legacy status without names is matched to directories by ID.
-	legacy := func(context.Context) ([]pool.AccountStatus, error) {
-		return []pool.AccountStatus{
-			{ID: ids["alice"], Quota: weekly(60, 72*time.Hour)},
-			{ID: ids["bob"], Quota: weekly(90, 24*time.Hour)},
-		}, nil
-	}
-	call, stderr = execCall{}, bytes.Buffer{}
-	if err := runLaunch(context.Background(), cfg, store, recordingDeps(legacy, &call, &stderr), []string{"--"}); err != nil {
-		t.Fatal(err)
-	}
-	if got := envValues(call.env, "CODEX_HOME"); !slices.Equal(got, []string{store.Path("bob")}) {
-		t.Fatalf("legacy CODEX_HOME = %q", got)
-	}
-
-	cfg.CodexBin = ""
-	if err := runLaunch(context.Background(), cfg, store, recordingDeps(status, &call, &stderr), nil); err == nil || !strings.Contains(err.Error(), "codex_bin is not configured") {
-		t.Fatalf("empty codex_bin: %v", err)
+	if stderr.Len() != 0 {
+		t.Fatalf("unexpected stderr: %q", stderr.String())
 	}
 }
 
-func TestLaunchPinnedAccount(t *testing.T) {
+func TestLaunchAccountSelectionWasRemoved(t *testing.T) {
 	t.Setenv("CODEX_POOL_ACCOUNT", "")
-	cfg, store, ids := launchEnv(t, map[string]bool{"alice": false, "bob": false, "carol": true})
-	status := func(context.Context) ([]pool.AccountStatus, error) {
-		return []pool.AccountStatus{
-			{ID: ids["alice"], Name: "alice", Quota: weekly(60, 24*time.Hour)},
-			{ID: ids["bob"], Name: "bob", Quota: weekly(5, 72*time.Hour)},
-			{ID: ids["carol"], Name: "carol", Disabled: true, Quota: weekly(90, time.Hour)},
-		}, nil
-	}
+	cfg, store, _ := launchEnv(t, map[string]bool{"alice": false})
 	var call execCall
-	var stderr bytes.Buffer
-	if err := runLaunch(context.Background(), cfg, store, recordingDeps(status, &call, &stderr), []string{"--account", "bob", "--", "resume"}); err != nil {
-		t.Fatal(err)
+	if err := runLaunch(context.Background(), cfg, store, recordingDeps(nil, &call, nil), []string{"--account", "alice", "--"}); err == nil {
+		t.Fatal("--account unexpectedly accepted")
 	}
-	if got := envValues(call.env, "CODEX_HOME"); !slices.Equal(got, []string{store.Path("bob")}) {
-		t.Fatalf("pinned CODEX_HOME = %q", got)
-	}
-	if !slices.Equal(call.args, []string{cfg.CodexBin, "resume"}) {
-		t.Fatalf("args = %q", call.args)
-	}
-	if got := stderr.String(); got != "codex-pool: account=bob remaining=5%\n" {
-		t.Fatalf("stderr = %q", got)
-	}
-
-	// CODEX_POOL_ACCOUNT is the same as --account.
-	t.Setenv("CODEX_POOL_ACCOUNT", "bob")
-	call = execCall{}
-	if err := runLaunch(context.Background(), cfg, store, recordingDeps(status, &call, &stderr), []string{"--quiet"}); err != nil {
-		t.Fatal(err)
-	}
-	if got := envValues(call.env, "CODEX_HOME"); !slices.Equal(got, []string{store.Path("bob")}) {
-		t.Fatalf("env-pinned CODEX_HOME = %q", got)
-	}
-	t.Setenv("CODEX_POOL_ACCOUNT", "")
-
-	for _, name := range []string{"carol", "nobody"} {
-		call = execCall{}
-		err := runLaunch(context.Background(), cfg, store, recordingDeps(status, &call, &stderr), []string{"--account", name, "--"})
-		if err == nil || !strings.Contains(err.Error(), name) {
-			t.Fatalf("pinned %s: err = %v", name, err)
-		}
-		if call.called {
-			t.Fatalf("pinned %s: exec ran", name)
-		}
+	t.Setenv("CODEX_POOL_ACCOUNT", "alice")
+	if err := runLaunch(context.Background(), cfg, store, recordingDeps(nil, &call, nil), nil); err == nil {
+		t.Fatal("CODEX_POOL_ACCOUNT unexpectedly accepted")
 	}
 }
 
@@ -209,48 +145,24 @@ func TestLaunchHelpBypassesSelection(t *testing.T) {
 	}
 }
 
-func TestLaunchFallsBackWhenNoQuota(t *testing.T) {
+func TestLaunchDoesNotProbeQuota(t *testing.T) {
 	t.Setenv("CODEX_POOL_ACCOUNT", "")
-	cfg, store, ids := launchEnv(t, map[string]bool{"alice": true, "bob": false, "carol": false})
+	cfg, store, _ := launchEnv(t, map[string]bool{"alice": false, "bob": false})
 	var call execCall
 	var stderr bytes.Buffer
-	failed := func(context.Context) ([]pool.AccountStatus, error) { return nil, errors.New("server down") }
-	if err := runLaunch(context.Background(), cfg, store, recordingDeps(failed, &call, &stderr), []string{"--", "exec"}); err != nil {
+	statusCalled := false
+	status := func(context.Context) ([]pool.AccountStatus, error) {
+		statusCalled = true
+		return nil, errors.New("must not be called")
+	}
+	if err := runLaunch(context.Background(), cfg, store, recordingDeps(status, &call, &stderr), []string{"--", "exec"}); err != nil {
 		t.Fatal(err)
 	}
-	if got := envValues(call.env, "CODEX_HOME"); !slices.Equal(got, []string{store.Path("bob")}) {
-		t.Fatalf("fallback CODEX_HOME = %q", got)
+	if statusCalled || !call.called || stderr.Len() != 0 {
+		t.Fatalf("statusCalled=%v called=%v stderr=%q", statusCalled, call.called, stderr.String())
 	}
-	if got := stderr.String(); !strings.Contains(got, "server down") || !strings.Contains(got, "codex-pool: account=bob remaining=?%\n") {
-		t.Fatalf("stderr = %q", got)
-	}
-
-	// Quota known but nothing above the reserve: least-used account with a warning.
-	low := func(context.Context) ([]pool.AccountStatus, error) {
-		return []pool.AccountStatus{
-			{ID: ids["bob"], Name: "bob", Quota: weekly(2, time.Hour)},
-			{ID: ids["carol"], Name: "carol", Quota: weekly(7, time.Hour)},
-		}, nil
-	}
-	call, stderr = execCall{}, bytes.Buffer{}
-	if err := runLaunch(context.Background(), cfg, store, recordingDeps(low, &call, &stderr), nil); err != nil {
-		t.Fatal(err)
-	}
-	if got := envValues(call.env, "CODEX_HOME"); !slices.Equal(got, []string{store.Path("carol")}) {
-		t.Fatalf("best-effort CODEX_HOME = %q", got)
-	}
-	if want := "codex-pool: no account has quota above reserve; using carol\ncodex-pool: account=carol remaining=7%\n"; stderr.String() != want {
-		t.Fatalf("stderr = %q, want %q", stderr.String(), want)
-	}
-
-	// Empty status also falls back.
-	empty := func(context.Context) ([]pool.AccountStatus, error) { return nil, nil }
-	call, stderr = execCall{}, bytes.Buffer{}
-	if err := runLaunch(context.Background(), cfg, store, recordingDeps(empty, &call, &stderr), nil); err != nil {
-		t.Fatal(err)
-	}
-	if got := envValues(call.env, "CODEX_HOME"); !slices.Equal(got, []string{store.Path("bob")}) || !call.called {
-		t.Fatalf("empty-status CODEX_HOME = %q", got)
+	if got := envValues(call.env, "CODEX_HOME"); len(got) != 1 || got[0] != "" {
+		t.Fatalf("CODEX_HOME = %q", got)
 	}
 }
 
@@ -323,41 +235,18 @@ func TestLaunchRefusesLoginLogout(t *testing.T) {
 	}
 }
 
-func TestLaunchInheritedCodexHomeUnderAccountsDirPins(t *testing.T) {
+func TestLaunchPreservesInheritedCodexHome(t *testing.T) {
 	t.Setenv("CODEX_POOL_ACCOUNT", "")
-	cfg, store, ids := launchEnv(t, map[string]bool{"alice": false, "bob": false})
-	status := func(context.Context) ([]pool.AccountStatus, error) {
-		return []pool.AccountStatus{
-			{ID: ids["alice"], Name: "alice", Quota: weekly(90, 24*time.Hour)},
-			{ID: ids["bob"], Name: "bob", Quota: weekly(20, 72*time.Hour)},
-		}, nil
-	}
-	// A nested codex started from a pooled session keeps its account, even
-	// when CODEX_HOME is spelled with a trailing slash or "..".
+	cfg, store, _ := launchEnv(t, map[string]bool{"alice": false, "bob": false})
 	for _, home := range []string{store.Path("bob"), store.Path("bob") + "/", filepath.Join(store.Path("alice"), "..", "bob")} {
 		t.Setenv("CODEX_HOME", home)
 		var call execCall
 		var stderr bytes.Buffer
-		if err := runLaunch(context.Background(), cfg, store, recordingDeps(status, &call, &stderr), []string{"--", "exec"}); err != nil {
+		if err := runLaunch(context.Background(), cfg, store, recordingDeps(nil, &call, &stderr), []string{"--", "exec"}); err != nil {
 			t.Fatal(err)
 		}
-		if got := envValues(call.env, "CODEX_HOME"); !slices.Equal(got, []string{store.Path("bob")}) {
-			t.Fatalf("%s: CODEX_HOME = %q", home, got)
-		}
-		if got := stderr.String(); got != "codex-pool: account=bob remaining=20%\n" {
-			t.Fatalf("stderr = %q", got)
-		}
-	}
-	// A disabled or unknown directory under accounts_dir is refused like --account.
-	if err := os.WriteFile(filepath.Join(store.Path("bob"), "disabled"), nil, 0600); err != nil {
-		t.Fatal(err)
-	}
-	for _, name := range []string{"bob", "nobody"} {
-		t.Setenv("CODEX_HOME", store.Path(name))
-		var call execCall
-		var stderr bytes.Buffer
-		if err := runLaunch(context.Background(), cfg, store, recordingDeps(status, &call, &stderr), nil); err == nil || call.called {
-			t.Fatalf("%s: err=%v called=%v", name, err, call.called)
+		if got := envValues(call.env, "CODEX_HOME"); !slices.Equal(got, []string{home}) || stderr.Len() != 0 {
+			t.Fatalf("home=%q got=%q stderr=%q", home, got, stderr.String())
 		}
 	}
 }

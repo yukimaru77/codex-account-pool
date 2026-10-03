@@ -102,7 +102,8 @@ final_target() {
 
 # is_pool_wrapper FILE: FILE is a script that runs codex-pool launch.
 is_pool_wrapper() {
-	[ -f "$1" ] && grep -q 'codex-pool launch' "$1" 2>/dev/null
+	[ -f "$1" ] && (grep -q 'codex-pool launch' "$1" 2>/dev/null ||
+		grep -q 'Normal Codex is deliberately not routed through codex-pool' "$1" 2>/dev/null)
 }
 
 PREFIX=$(absdir "$PREFIX")
@@ -191,7 +192,7 @@ json_field() {
 }
 
 # 3b. rr.json: the round-robin base URL and client key for pool-rr and other
-# RR clients. Never overwritten; a legacy kb-pool.json is carried over.
+# RR clients. Never overwritten.
 listen=$(sed -n 's/^ *"listen": *"\(.*\)",\{0,1\} *$/\1/p' "$CONFIG")
 listen=${listen:-127.0.0.1:18473}
 case $listen in
@@ -200,19 +201,11 @@ esac
 RR_BASE=http://$listen/_pool/rr
 RR_KEY=$STATE/client.key
 RR_CONFIG=$POOL_HOME/rr.json
-LEGACY_RR_CONFIG=$POOL_HOME/kb-pool.json
 if [ -e "$RR_CONFIG" ]; then
 	echo "keeping existing $RR_CONFIG"
 	RR_BASE=$(json_field "$RR_CONFIG" base_url)
 	RR_KEY=$(json_field "$RR_CONFIG" key_file)
 else
-	if [ -e "$LEGACY_RR_CONFIG" ]; then
-		legacy_origin=$(json_field "$LEGACY_RR_CONFIG" origin)
-		legacy_key=$(json_field "$LEGACY_RR_CONFIG" key_file)
-		[ -n "$legacy_origin" ] && RR_BASE=${legacy_origin%/}/_pool/rr
-		[ -n "$legacy_key" ] && RR_KEY=$legacy_key
-		echo "install-local: notice: created $RR_CONFIG from legacy $LEGACY_RR_CONFIG (left in place; remove it when no client reads it)"
-	fi
 	printf '{"base_url": %s, "key_file": %s}\n' "$(json_string "$RR_BASE")" \
 		"$(json_string "$RR_KEY")" >"$RR_CONFIG.tmp.$$"
 	chmod 0600 "$RR_CONFIG.tmp.$$"
@@ -220,12 +213,13 @@ else
 	echo "wrote $RR_CONFIG"
 fi
 
-# 4. codex wrapper. Anything else at $WRAPPER is kept as codex.pre-pool-<date>.
+# 4. Keep normal Codex independent from the RR server. Anything else at
+# $WRAPPER is kept as codex.pre-pool-<date>.
 tmp_wrapper=$WRAPPER.tmp.$$
 cat >"$tmp_wrapper" <<WRAPPER
 #!/bin/sh
-# codex-pool launch: picks CODEX_HOME by remaining quota.
-exec "$POOL_BIN" launch --config "$CONFIG" -- "\$@"
+# Normal Codex is deliberately not routed through codex-pool.
+exec "$CODEX_BIN" "\$@"
 WRAPPER
 chmod 0755 "$tmp_wrapper"
 if { [ -e "$WRAPPER" ] || [ -L "$WRAPPER" ]; } && ! is_pool_wrapper "$WRAPPER"; then
